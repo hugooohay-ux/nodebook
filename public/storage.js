@@ -13,6 +13,7 @@ Nodebook keeps your notes as Markdown in this browser. Each vault is its own col
 Use **Export** in the sidebar to download a vault as a .zip backup.
 
 - Link notes by typing \`[[\` and picking a note, e.g. [[Linking notes]].
+- Or press **Ctrl+Enter** with the cursor in (or just after) a word to turn it into a new note.
 - Open the [[Graph view]] with **Ctrl+G** to see how everything connects.
 - Every note shows its **backlinks** in the right panel.
 

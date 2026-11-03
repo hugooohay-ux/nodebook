@@ -34,6 +34,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 | Key | Action |
 | --- | --- |
 | Alt+N | New note |
+| Ctrl+Enter | Turn the word at the cursor (or the selection) into a linked note |
 | Ctrl+P / Ctrl+O | Search notes |
 | Ctrl+G | Toggle graph view |
 | Ctrl+E | Toggle edit / read |

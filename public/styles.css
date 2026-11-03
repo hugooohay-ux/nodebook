@@ -293,6 +293,26 @@ input:focus { border-color: var(--accent-dim); }
 #ac li.sel { background: var(--accent-soft); color: var(--accent); }
 #ac li.create { color: var(--text-dim); font-style: italic; }
 
+/* ---------- toast ---------- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 30;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  animation: toast-in .2s ease-out;
+  transition: opacity .25s, transform .25s;
+}
+#toast.out { opacity: 0; transform: translate(-50%, 8px); }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+
 /* ---------- home ---------- */
 #home { height: 100vh; overflow-y: auto; }
 #home-bar {

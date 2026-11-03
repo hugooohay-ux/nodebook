@@ -156,16 +156,73 @@ async function openNote(path, { push = true } = {}) {
   highlightActive();
 }
 
-async function openOrCreate(target) {
-  const existing = resolve(target);
-  if (existing) return openNote(existing);
-  const path = (target.replace(/[\\:*?"<>|]/g, '').trim() || 'Untitled') + '.md';
+async function createNoteNamed(name) {
+  const path = (name.replace(/[\\:*?"<>|]/g, '').trim() || 'Untitled') + '.md';
   await api.createNote(path, '');
   state.notes.set(path, { path, name: nameOf(path), content: '' });
   rebuildIndex();
   renderFileList();
-  openNote(path);
+  return path;
+}
+
+async function openOrCreate(target) {
+  const existing = resolve(target);
+  if (existing) return openNote(existing);
+  openNote(await createNoteNamed(target));
   setMode('edit');
+}
+
+// Ctrl+Enter: turn the word at/just before the cursor (or the selection) into [[link]] and create that note
+const WORD_CH = /[\p{L}\p{N}_'-]/u;
+async function linkWordAtCursor() {
+  const ta = $('#editor');
+  const text = ta.value;
+  let start = ta.selectionStart;
+  let end = ta.selectionEnd;
+  const caret = end;
+  if (start === end) {
+    // Cursor inside a word, or after a word plus trailing spaces
+    if (!WORD_CH.test(text[end] || '') && !WORD_CH.test(text[end - 1] || '')) {
+      while (end > 0 && /[ \t]/.test(text[end - 1])) end--;
+    }
+    start = end;
+    while (start > 0 && WORD_CH.test(text[start - 1])) start--;
+    while (end < text.length && WORD_CH.test(text[end])) end++;
+  } else {
+    while (start < end && /\s/.test(text[start])) start++;
+    while (end > start && /\s/.test(text[end - 1])) end--;
+  }
+  const word = text.slice(start, end).replace(/^['-]+|['-]+$/g, '');
+  start += text.slice(start, end).indexOf(word);
+  end = start + word.length;
+  if (!word || /[[\]\n|#]/.test(word)) return toast('Put the cursor in or right after a word');
+  if (text.slice(start - 2, start) === '[[' && text.slice(end, end + 2) === ']]') return toast(`“${word}” is already a link`);
+
+  // execCommand keeps the edit on the native undo stack (Ctrl+Z works)
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  document.execCommand('insertText', false, `[[${word}]]`);
+  const pos = caret > end ? caret + 4 : end + 4;
+  ta.setSelectionRange(pos, pos);
+  scheduleSave();
+
+  if (resolve(word)) return toast(`Linked to “${word}”`);
+  await createNoteNamed(word);
+  await flushSave();
+  toast(`Created note “${word}”`);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.hidden = false;
+  el.classList.remove('out');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.add('out');
+    toastTimer = setTimeout(() => (el.hidden = true), 250);
+  }, 1800);
 }
 
 async function newNote() {
@@ -457,6 +514,12 @@ $('#editor').addEventListener('input', () => {
 $('#editor').addEventListener('click', closeAutocomplete);
 $('#editor').addEventListener('blur', () => setTimeout(closeAutocomplete, 150));
 $('#editor').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    closeAutocomplete();
+    linkWordAtCursor();
+    return;
+  }
   if (ac.open) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       ac.sel = (ac.sel + (e.key === 'ArrowDown' ? 1 : -1) + ac.items.length) % ac.items.length;
