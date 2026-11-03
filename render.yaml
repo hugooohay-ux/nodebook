@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: nodebook
+    runtime: static
+    buildCommand: echo "No build step"
+    staticPublishPath: ./public
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer

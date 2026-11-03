@@ -1,0 +1,9 @@
+{
+  "name": "nodebook",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A Markdown note web app with vaults, wiki links, backlinks and a graph view",
+  "scripts": {
+    "start": "node dev-server.js"
+  }
+}

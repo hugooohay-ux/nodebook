@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:;">
+  <title>Nodebook</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg stroke='%233ec7b0' stroke-width='2'%3E%3Cline x1='8' y1='9' x2='23' y2='13'/%3E%3Cline x1='8' y1='9' x2='12' y2='24'/%3E%3Cline x1='23' y1='13' x2='12' y2='24'/%3E%3C/g%3E%3Cg fill='%233ec7b0'%3E%3Ccircle cx='8' cy='9' r='4'/%3E%3Ccircle cx='23' cy='13' r='5'/%3E%3Ccircle cx='12' cy='24' r='4'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ---------- home: all vaults ---------- -->
+  <div id="home" hidden>
+    <header id="home-bar">
+      <span class="brand">◉ Nodebook</span>
+      <input id="vault-search" type="search" placeholder="Search vaults">
+      <button id="btn-import-vault" title="Import a .zip of Markdown notes as a new vault">Import .zip</button>
+    </header>
+
+    <section id="templates">
+      <div class="home-inner">
+        <h2>Start a new vault</h2>
+        <div class="template-row">
+          <button class="template" data-template="blank">
+            <span class="tpl-thumb blank">＋</span>
+            <span class="tpl-name">Blank vault</span>
+          </button>
+          <button class="template" data-template="starter">
+            <span class="tpl-thumb starter"></span>
+            <span class="tpl-name">Getting started</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-inner">
+      <div class="vaults-head">
+        <h2>Your vaults</h2>
+      </div>
+      <div id="vault-grid"></div>
+      <p id="vault-empty" hidden>No vaults match your search.</p>
+    </section>
+  </div>
+
+  <ul id="card-menu" class="menu" hidden>
+    <li data-act="open">Open</li>
+    <li data-act="rename">Rename</li>
+    <li data-act="export">Export as .zip</li>
+    <li data-act="delete" class="danger">Delete</li>
+  </ul>
+
+  <!-- ---------- inside a vault ---------- -->
+  <div id="app" hidden>
+    <aside id="sidebar">
+      <div class="vault-row">
+        <a id="btn-home" class="icon" href="#/" title="All vaults">‹</a>
+        <span id="vault-name" title="Click to rename vault"></span>
+        <button id="btn-import" class="icon" title="Import .md or .zip files into this vault">⤒</button>
+        <button id="btn-export" class="icon" title="Export vault as .zip">⤓</button>
+      </div>
+      <div class="actions">
+        <button id="btn-new" title="New note (Alt+N)">＋ New note</button>
+        <button id="btn-graph" title="Graph view (Ctrl+G)">◉ Graph</button>
+      </div>
+      <input id="search" type="search" placeholder="Search notes…  Ctrl+P">
+      <ul id="file-list"></ul>
+    </aside>
+
+    <main id="main">
+      <section id="note-view" hidden>
+        <header id="note-header">
+          <button id="btn-menu" class="icon" title="Notes">☰</button>
+          <button id="btn-back" class="icon" title="Back (Alt+←)">‹</button>
+          <button id="btn-fwd" class="icon" title="Forward (Alt+→)">›</button>
+          <input id="title" spellcheck="false" title="Rename note">
+          <div class="seg">
+            <button data-mode="edit">Edit</button>
+            <button data-mode="preview">Read</button>
+          </div>
+          <button id="btn-delete" class="icon danger" title="Delete note">🗑</button>
+        </header>
+        <div id="content">
+          <textarea id="editor" spellcheck="false" placeholder="Start writing…  Type [[ to link a note"></textarea>
+          <article id="preview" class="markdown"></article>
+        </div>
+      </section>
+
+      <section id="graph-view" hidden>
+        <canvas id="graph"></canvas>
+        <div id="graph-controls">
+          <input id="graph-filter" type="search" placeholder="Highlight…">
+          <label><input type="checkbox" id="g-local"> Local (current note)</label>
+          <label class="sub">Depth <input type="range" id="g-depth" min="1" max="4" value="1"></label>
+          <label><input type="checkbox" id="g-unresolved" checked> Unresolved links</label>
+          <label><input type="checkbox" id="g-orphans" checked> Orphans</label>
+          <label class="sub">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
+          <label class="sub">Link distance <input type="range" id="g-dist" min="20" max="250" value="80"></label>
+          <button id="g-fit">Fit to view</button>
+        </div>
+        <div id="graph-stats"></div>
+      </section>
+
+      <section id="empty">
+        <div class="empty-inner">
+          <h1>Nodebook</h1>
+          <p id="empty-msg">This vault is empty.</p>
+          <button id="btn-first-note" class="primary">Create a note</button>
+        </div>
+      </section>
+    </main>
+
+    <aside id="rightbar">
+      <h3>Backlinks <span id="bl-count"></span></h3>
+      <ul id="backlinks"></ul>
+      <h3>Outgoing links</h3>
+      <ul id="outlinks"></ul>
+      <div id="stats"></div>
+    </aside>
+  </div>
+
+  <ul id="ac" hidden></ul>
+  <input id="file-input" type="file" accept=".md,.zip" multiple hidden>
+
+  <script src="vendor/marked.umd.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+  <script src="storage.js"></script>
+  <script src="graph.js"></script>
+  <script src="home.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
