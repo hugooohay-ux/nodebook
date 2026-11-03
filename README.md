@@ -32,6 +32,9 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
   Right-click to let it float again, or "Unpin all". Notes are kept off lines that aren't theirs, and lines
   stop at the edge of each note.
+- Coloured groups: put notes in a named group (right-click in the graph, or the chip on a note) to colour them;
+  groups can pull their notes together. Manage colours/names in the graph panel.
+- Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter
 - Full-text search, back/forward history, live sync between open tabs

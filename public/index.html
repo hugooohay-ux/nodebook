@@ -108,8 +108,12 @@
         <label><input type="checkbox" id="g-orphans" checked> Orphans</label>
         <label class="sub">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
         <label class="sub">Link distance <input type="range" id="g-dist" min="20" max="250" value="80"></label>
+        <label class="sub" title="How much bigger well-linked notes are (left: all the same size)">Node size <input type="range" id="g-size" min="0" max="3" step="0.1" value="1"></label>
         <button id="g-fit">Fit to view</button>
         <button id="g-unpin" title="Let every placed note float again">Unpin all</button>
+        <div class="g-groups-head">Groups</div>
+        <ul id="g-groups"></ul>
+        <label title="Notes in the same group drift towards each other"><input type="checkbox" id="g-pull" checked> Pull groups together</label>
       </div>
       <div id="graph-stats"></div>
     </section>
@@ -221,6 +225,7 @@
           <button id="po-add" title="Put this note under another note">+ Add</button>
           <input id="po-input" list="po-list" placeholder="Note name…" autocomplete="off" hidden>
           <datalist id="po-list"></datalist>
+          <button id="group-chip" class="group-chip" title="Put this note in a coloured group"></button>
         </div>
         <div id="content">
           <div id="editor"></div>

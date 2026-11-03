@@ -7,6 +7,7 @@ const state = {
   notes: new Map(), // path -> { path, name, content, mtime }
   links: new Map(), // path -> [{ target, resolved }]
   ups: new Map(), // path -> Set of parent paths ("Part of")
+  groups: { list: [], members: {} }, // coloured groups for this vault
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
   mode: 'edit',
@@ -159,6 +160,7 @@ async function enterVault(info) {
   Home.hide();
   Graph.reset(await api.getPins(info.id));
   state.vault = info;
+  state.groups = await api.getGroups(info.id);
   state.current = null;
   setVaultName(info.name);
   $('#btn-home').href = $('#vault-name').href = vaultHash();
@@ -183,7 +185,10 @@ async function showVaultPage(mode) {
   $('#vault-home').classList.toggle('graph-mode', mode === 'graph');
   document.querySelectorAll('.view-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
   $('#graph-view').hidden = mode !== 'graph';
-  if (mode === 'graph') Graph.show();
+  if (mode === 'graph') {
+    renderGroupLegend();
+    Graph.show();
+  }
   else {
     Graph.hide();
     renderNoteGrid();
@@ -226,9 +231,141 @@ async function showNote(path) {
   editor.load(note.content);
   setMode(state.mode);
   renderPartOf();
+  renderGroupChip();
   renderSidePanel();
   highlightActive();
 }
+
+// ---------- groups: named colours for notes ----------
+// Ordered so each new group gets a colour clearly different from the ones before it
+const GROUP_COLORS = ['#0090ff', '#f76b15', '#46a758', '#d6409f', '#12a594', '#e5484d', '#8e4ec6', '#e2a336'];
+
+const groupById = (id) => state.groups.list.find((g) => g.id === id) || null;
+const groupOf = (path) => groupById(state.groups.members[path]);
+
+async function saveGroups() {
+  // Drop memberships pointing at deleted groups or notes
+  for (const [path, id] of Object.entries(state.groups.members)) {
+    if (!groupById(id) || !state.notes.has(path)) delete state.groups.members[path];
+  }
+  await api.saveGroups(state.groups);
+  renderGroups();
+}
+
+// Everything that shows group colours
+function renderGroups() {
+  renderGroupChip();
+  renderGroupLegend();
+  if (state.view === 'docs') renderNoteGrid();
+  if (state.view === 'graph') Graph.rebuild();
+}
+
+function createGroup(name) {
+  const used = new Set(state.groups.list.map((g) => g.color));
+  const color = GROUP_COLORS.find((c) => !used.has(c)) || GROUP_COLORS[state.groups.list.length % GROUP_COLORS.length];
+  const g = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, color };
+  state.groups.list.push(g);
+  return g;
+}
+
+async function setGroup(path, groupId) {
+  if (groupId) state.groups.members[path] = groupId;
+  else delete state.groups.members[path];
+  await saveGroups();
+}
+
+// Small menu for choosing a note's group: existing groups, "No group", and a box to type a new one
+let groupMenu = null;
+function closeGroupMenu() {
+  groupMenu?.remove();
+  groupMenu = null;
+}
+function openGroupMenu(path, x, y) {
+  closeGroupMenu();
+  const current = state.groups.members[path];
+  groupMenu = document.createElement('ul');
+  groupMenu.className = 'menu group-menu';
+  groupMenu.innerHTML =
+    state.groups.list
+      .map((g) => `<li data-id="${g.id}"><span class="swatch" style="--sw:${g.color}"></span>${escapeHtml(g.name)}${g.id === current ? '<span class="check">✓</span>' : ''}</li>`)
+      .join('') +
+    `<li data-id="">No group${!current ? '<span class="check">✓</span>' : ''}</li>
+     <li class="sep"></li>
+     <li class="new"><input placeholder="New group…" spellcheck="false"></li>`;
+  document.body.appendChild(groupMenu);
+  groupMenu.style.left = Math.min(x, innerWidth - groupMenu.offsetWidth - 8) + 'px';
+  groupMenu.style.top = Math.min(y, innerHeight - groupMenu.offsetHeight - 8) + 'px';
+  const input = groupMenu.querySelector('input');
+  groupMenu.addEventListener('click', async (e) => {
+    const li = e.target.closest('li[data-id]');
+    if (!li) return;
+    closeGroupMenu();
+    await setGroup(path, li.dataset.id || null);
+  });
+  input.addEventListener('keydown', async (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') return closeGroupMenu();
+    if (e.key !== 'Enter') return;
+    const name = input.value.trim();
+    if (!name) return;
+    const g = state.groups.list.find((x) => x.name.toLowerCase() === name.toLowerCase()) || createGroup(name);
+    closeGroupMenu();
+    await setGroup(path, g.id);
+    toast(`“${nameOf(path)}” is in ${g.name}`);
+  });
+  if (!state.groups.list.length) input.focus();
+}
+document.addEventListener('pointerdown', (e) => {
+  if (groupMenu && !e.target.closest('.group-menu')) closeGroupMenu();
+});
+
+function renderGroupChip() {
+  const chip = $('#group-chip');
+  const g = state.current ? groupOf(state.current) : null;
+  chip.classList.toggle('set', !!g);
+  chip.style.setProperty('--sw', g ? g.color : '');
+  chip.innerHTML = g ? `<span class="swatch"></span>${escapeHtml(g.name)}` : '+ Group';
+}
+$('#group-chip').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const r = e.currentTarget.getBoundingClientRect();
+  openGroupMenu(state.current, r.left, r.bottom + 4);
+});
+
+// Groups section in the graph panel: change colour, rename, delete; hover highlights the group
+function renderGroupLegend() {
+  const ul = $('#g-groups');
+  const counts = {};
+  for (const [path, id] of Object.entries(state.groups.members)) if (state.notes.has(path)) counts[id] = (counts[id] || 0) + 1;
+  ul.innerHTML = state.groups.list.length
+    ? state.groups.list
+        .map((g) => `<li data-id="${g.id}">
+          <button class="swatch" style="--sw:${g.color}" title="Change colour"></button>
+          <span class="g-name" title="Click to rename">${escapeHtml(g.name)}</span>
+          <span class="g-count">${counts[g.id] || 0}</span>
+          <button class="g-del" title="Delete group">×</button>
+        </li>`)
+        .join('')
+    : '<li class="none">Right-click a note → Group… to make one</li>';
+}
+$('#g-groups').addEventListener('click', async (e) => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const g = groupById(li.dataset.id);
+  if (e.target.closest('.swatch')) {
+    g.color = GROUP_COLORS[(GROUP_COLORS.indexOf(g.color) + 1) % GROUP_COLORS.length];
+    await saveGroups();
+  } else if (e.target.closest('.g-del')) {
+    const ok = await Dialog.confirm(`The notes in “${g.name}” stay; they just lose the colour.`, { title: 'Delete group?', okLabel: 'Delete', danger: true });
+    if (!ok) return;
+    state.groups.list = state.groups.list.filter((x) => x !== g);
+    await saveGroups();
+  } else if (e.target.closest('.g-name') && !e.target.isContentEditable) {
+    inlineEdit(e.target.closest('.g-name'), { value: g.name, onSave: async (name) => { g.name = name; await saveGroups(); } });
+  }
+});
+$('#g-groups').addEventListener('mouseover', (e) => Graph.highlightGroup(e.target.closest('li[data-id]')?.dataset.id || null));
+$('#g-groups').addEventListener('mouseleave', () => Graph.highlightGroup(null));
 
 // ---------- Part-of bar ----------
 function renderPartOf() {
@@ -430,6 +567,11 @@ async function renameNote(path, newName) {
   state.notes.set(newPath, { ...note, path: newPath, name: newName });
   if (state.current === path) state.current = newPath;
   Graph.movePin(path, newPath);
+  if (state.groups.members[path]) {
+    state.groups.members[newPath] = state.groups.members[path];
+    delete state.groups.members[path];
+    api.saveGroups(state.groups);
+  }
 
   const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#])`, 'gi');
   for (const n of state.notes.values()) {
@@ -469,6 +611,10 @@ async function deleteNote(path) {
   await api.trashNote(path);
   state.notes.delete(path);
   Graph.movePin(path, null);
+  if (state.groups.members[path]) {
+    delete state.groups.members[path];
+    api.saveGroups(state.groups);
+  }
   rebuildIndex();
   renderFileList();
   return true;
@@ -586,7 +732,7 @@ function renderNoteGrid() {
         <div class="card-info">
           <div class="card-text">
             <div class="card-name" title="${escapeHtml(n.path)}">${escapeHtml(n.name)}</div>
-            <div class="card-meta"><span class="card-icon doc"></span> ${n.mtime ? 'Edited ' + edited(n.mtime) : ''}${links ? ` · ${links} link${links === 1 ? '' : 's'}` : ''}</div>
+            <div class="card-meta">${groupOf(n.path) ? `<span class="swatch" style="--sw:${groupOf(n.path).color}" title="${escapeHtml(groupOf(n.path).name)}"></span>` : '<span class="card-icon doc"></span>'} ${n.mtime ? 'Edited ' + edited(n.mtime) : ''}${links ? ` · ${links} link${links === 1 ? '' : 's'}` : ''}</div>
           </div>
           <button class="card-more icon" title="More actions">⋮</button>
         </div>
@@ -880,6 +1026,9 @@ api.onVaultChanged(async (vaultId) => {
   if (!state.vault || vaultId !== state.vault.id) return;
   const before = state.notes.get(state.current)?.content;
   await loadNotes();
+  state.groups = await api.getGroups(state.vault.id);
+  renderGroupChip();
+  renderGroupLegend();
   renderFileList();
   if (state.view === 'docs') return renderNoteGrid();
   if (state.view === 'note' && !state.notes.has(state.current)) {
@@ -898,9 +1047,10 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, groups: state.groups, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
+  onGroupMenu: (node, x, y) => openGroupMenu(node.id, x, y),
 });
 
 // Routes: #/ (all vaults), #/v/<vault> (its documents), #/v/<vault>/graph, #/v/<vault>/n/<note path>

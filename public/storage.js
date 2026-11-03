@@ -158,6 +158,19 @@ See also: [[Welcome]], [[Linking notes]].
       });
     },
 
+    // Coloured groups: { list: [{ id, name, color }], members: { notePath: groupId } }, kept with the vault
+    async getGroups(id = current) {
+      const g = await tx('readonly', async (s) => (await req(s.vaults.get(id)))?.groups);
+      return { list: g?.list || [], members: g?.members || {} };
+    },
+    async saveGroups(groups, id = current) {
+      await tx('readwrite', async (s) => {
+        const v = await req(s.vaults.get(id));
+        if (v) s.vaults.put({ ...v, groups });
+      });
+      changed(id);
+    },
+
     async renameVault(id, name) {
       await tx('readwrite', async (s) => {
         const v = await req(s.vaults.get(id));

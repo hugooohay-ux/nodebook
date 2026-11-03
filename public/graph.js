@@ -31,11 +31,13 @@ const Graph = (() => {
   let downAt = null;
   let fitPending = true;
 
-  const settings = { local: false, depth: 1, unresolved: true, orphans: true, repel: 500, dist: 80, filter: '' };
+  const settings = { local: false, depth: 1, unresolved: true, orphans: true, repel: 500, dist: 80, filter: '', pull: true, sizeMul: 1 };
+  try { settings.sizeMul = JSON.parse(localStorage.getItem('nodebook:graph'))?.sizeMul ?? 1; } catch { /* storage blocked */ }
+  let litGroup = null; // group being hovered in the legend
 
   // ---------- data ----------
   function rebuild() {
-    const { notes, links, current } = opts.getData();
+    const { notes, links, groups, current } = opts.getData();
     const map = new Map();
     const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set(), up: new Set() });
     for (const n of notes.values()) map.set(n.path, node(n.path, n.name, false));
@@ -61,7 +63,10 @@ const Graph = (() => {
         map.get(id).nbrs.add(src);
       }
     }
-    for (const n of map.values()) n.deg = n.nbrs.size;
+    for (const n of map.values()) {
+      n.deg = n.nbrs.size;
+      n.links = n.up.size + n.down.size; // total links: ones it makes plus ones made to it
+    }
 
     let keep = [...map.values()];
     if (settings.local && current && map.has(current)) {
@@ -76,6 +81,16 @@ const Graph = (() => {
     } else if (!settings.orphans) {
       keep = keep.filter((n) => n.deg > 0 || n.id === current);
     }
+
+    // Group colour for each note in a group
+    const groupList = new Map((groups?.list || []).map((g) => [g.id, g]));
+    for (const n of keep) n.group = groupList.get(groups?.members?.[n.id]) || null;
+
+    // Size scales linearly from the note with the fewest links (0) to the one with the most (1)
+    const counts = keep.map((n) => n.links);
+    const lo = Math.min(...counts);
+    const hi = Math.max(...counts);
+    for (const n of keep) n.size = hi > lo ? (n.links - lo) / (hi - lo) : 0;
 
     byId = new Map(keep.map((n) => [n.id, n]));
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
@@ -183,6 +198,22 @@ const Graph = (() => {
         }
       }
     }
+    // Notes in the same group drift towards the group's middle
+    if (settings.pull) {
+      const centres = new Map();
+      for (const p of nodes) {
+        if (!p.group) continue;
+        const c = centres.get(p.group.id) || { x: 0, y: 0, n: 0 };
+        c.x += p.x; c.y += p.y; c.n++;
+        centres.set(p.group.id, c);
+      }
+      for (const p of nodes) {
+        const c = p.group && centres.get(p.group.id);
+        if (!c || c.n < 2) continue;
+        p.vx += (c.x / c.n - p.x) * 0.04 * a;
+        p.vy += (c.y / c.n - p.y) * 0.04 * a;
+      }
+    }
     for (const p of nodes) {
       p.vx -= p.x * 0.004 * a;
       p.vy -= p.y * 0.004 * a;
@@ -200,7 +231,8 @@ const Graph = (() => {
   }
 
   // ---------- drawing ----------
-  const radius = (n) => 4 + Math.sqrt(n.deg) * 2.2;
+  // Smallest notes are 4px; the most-linked one grows by up to 16px times the "Node size" slider
+  const radius = (n) => 4 + (n.size || 0) * 16 * settings.sizeMul;
 
   function size() {
     const r = canvas.getBoundingClientRect();
@@ -223,7 +255,7 @@ const Graph = (() => {
 
     const focus = hover || (drag && drag.node) || null;
     const q = settings.filter.toLowerCase();
-    const match = (n) => !q || n.label.toLowerCase().includes(q);
+    const match = (n) => (!q || n.label.toLowerCase().includes(q)) && (!litGroup || n.group?.id === litGroup);
 
     // Ease every highlight value toward its target so hover changes animate
     const now = performance.now();
@@ -340,12 +372,13 @@ const Graph = (() => {
 
       const accented = n.id === current || (q && match(n));
       ctx.globalAlpha = v;
-      ctx.fillStyle = accented ? COLORS.accent : n.unresolved ? COLORS.unresolved : COLORS.node;
+      ctx.fillStyle = accented ? COLORS.accent : n.group ? n.group.color : n.unresolved ? COLORS.unresolved : COLORS.node;
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fill();
       // Tint toward the accent colour as the node lights up
-      const tint = accented ? 0 : Math.max(n.hot, n.nb * 0.55);
+      // Grouped notes keep their colour when lit (the glow and size show the highlight)
+      const tint = accented || n.group ? 0 : Math.max(n.hot, n.nb * 0.55);
       if (tint > 0.01) {
         ctx.globalAlpha = tint;
         ctx.fillStyle = COLORS.accent;
@@ -502,7 +535,15 @@ const Graph = (() => {
     on('g-orphans', 'change', (e) => { settings.orphans = e.target.checked; rebuild(); });
     on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
     on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
+    on('g-size', 'input', (e) => {
+      settings.sizeMul = +e.target.value;
+      alpha = Math.max(alpha, 0.3); // bigger notes need a bit more room
+      try { localStorage.setItem('nodebook:graph', JSON.stringify({ sizeMul: settings.sizeMul })); } catch { /* storage blocked */ }
+    });
+    const sizeSlider = document.getElementById('g-size');
+    if (sizeSlider) sizeSlider.value = settings.sizeMul;
     on('g-fit', 'click', fit);
+    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.5); });
     on('g-unpin', 'click', () => {
       pins.clear();
       for (const n of nodes) n.pinned = false;
@@ -530,7 +571,7 @@ const Graph = (() => {
     nodeMenu?.remove();
     nodeMenu = document.createElement('ul');
     nodeMenu.className = 'menu';
-    nodeMenu.innerHTML = `<li data-act="open">Open note</li><li data-act="pin">${n.pinned ? 'Let it float again' : 'Keep it here'}</li>`;
+    nodeMenu.innerHTML = `<li data-act="open">Open note</li><li data-act="pin">${n.pinned ? 'Let it float again' : 'Keep it here'}</li>${n.unresolved ? '' : '<li data-act="group">Group…</li>'}`;
     document.body.appendChild(nodeMenu);
     nodeMenu.style.left = Math.min(x, innerWidth - nodeMenu.offsetWidth - 8) + 'px';
     nodeMenu.style.top = Math.min(y, innerHeight - nodeMenu.offsetHeight - 8) + 'px';
@@ -540,6 +581,7 @@ const Graph = (() => {
       nodeMenu = null;
       if (act === 'open') opts.onOpen(n);
       else if (act === 'pin') setPin(n, !n.pinned);
+      else if (act === 'group') opts.onGroupMenu?.(n, x, y);
     });
   }
   document.addEventListener('pointerdown', (e) => {
@@ -587,10 +629,14 @@ const Graph = (() => {
       rebuild();
       updateStats();
     },
+    // Light up one group (hovering it in the legend); null for none
+    highlightGroup(id) {
+      litGroup = id;
+    },
     // Current layout, read-only: notes with positions, and lines as pairs of note ids
     layout() {
       return {
-        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), pinned: !!n.pinned })),
+        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), pinned: !!n.pinned, group: n.group?.name || null })),
         edges: edges.map(([p, q]) => [p.id, q.id]),
       };
     },
