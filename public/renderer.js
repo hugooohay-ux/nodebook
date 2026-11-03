@@ -423,7 +423,7 @@ async function renameNote(path, newName) {
   try {
     await api.renameNote(path, newPath);
   } catch (e) {
-    alert(e.message);
+    Dialog.alert(e.message, 'Could not rename the note');
     return null;
   }
   state.notes.delete(path);
@@ -457,7 +457,9 @@ async function renameCurrent() {
 
 async function deleteNote(path) {
   const note = state.notes.get(path);
-  if (!note || !confirm(`Delete "${note.name}"? This can't be undone.`)) return false;
+  if (!note) return false;
+  const ok = await Dialog.confirm(`“${note.name}” will be deleted. This can't be undone.`, { title: 'Delete note?', okLabel: 'Delete', danger: true });
+  if (!ok) return false;
   if (state.current === path) {
     clearTimeout(saveTimer);
     pendingSave = null;
@@ -612,7 +614,7 @@ function closeNoteMenu() {
 
 $('#note-grid').addEventListener('click', (e) => {
   const card = e.target.closest('.note-card');
-  if (!card) return;
+  if (!card || e.target.isContentEditable) return;
   if (e.target.closest('.card-more')) {
     e.stopPropagation();
     const r = e.target.getBoundingClientRect();
@@ -635,8 +637,9 @@ $('#note-menu').addEventListener('click', async (e) => {
   if (!li || !path) return;
   if (li.dataset.act === 'open') openNote(path);
   else if (li.dataset.act === 'rename') {
-    const name = prompt('Rename note', nameOf(path));
-    if (name && (await renameNote(path, name))) renderNoteGrid();
+    // Edit the name right on the card, like vault names
+    const el = [...document.querySelectorAll('.note-card')].find((c) => c.dataset.path === path)?.querySelector('.card-name');
+    if (el) inlineEdit(el, { value: nameOf(path), onSave: async (name) => { await renameNote(path, name); renderNoteGrid(); } });
   } else if (li.dataset.act === 'delete') {
     if (await deleteNote(path)) renderNoteGrid();
   }
@@ -677,7 +680,8 @@ $('#vault-menu').addEventListener('click', async (e) => {
   if (li.dataset.act === 'rename') renameVault();
   else if (li.dataset.act === 'export') api.exportVault();
   else if (li.dataset.act === 'delete') {
-    if (!confirm(`Delete "${state.vault.name}" and its ${state.notes.size} notes? This can't be undone — export it first if you want a backup.`)) return;
+    const ok = await Dialog.confirm(`“${state.vault.name}” and its ${state.notes.size} notes will be deleted. This can't be undone — export it first if you want a backup.`, { title: 'Delete vault?', okLabel: 'Delete', danger: true });
+    if (!ok) return;
     const id = state.vault.id;
     location.hash = '#/';
     await api.deleteVault(id);
@@ -828,7 +832,7 @@ $('#file-input').addEventListener('change', async (e) => {
     else renderSidePanel();
     toast(`Imported ${count} note${count === 1 ? '' : 's'}`);
   } catch (err) {
-    alert('Could not import: ' + err.message);
+    Dialog.alert(err.message, 'Could not import');
   }
 });
 $('#btn-menu').addEventListener('click', () => document.body.classList.toggle('show-sidebar'));

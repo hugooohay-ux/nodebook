@@ -553,6 +553,37 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; poin
 .menu li:hover { background: var(--bg-hover); }
 .menu li.danger { color: var(--danger); }
 
+/* ---------- in-app dialogs (confirm / rename / errors) ---------- */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .35);
+  animation: dialog-fade .12s ease-out;
+}
+.dialog {
+  width: min(420px, 100%);
+  padding: 20px 22px 18px;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  animation: dialog-pop .14s ease-out;
+}
+.dialog-title { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+.dialog-msg { margin: 0 0 4px; color: var(--text-dim); line-height: 1.5; }
+.dialog-input { width: 100%; margin-top: 8px; padding: 8px 10px; font-size: 14px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.dialog-actions button { padding: 7px 16px; border-radius: 8px; }
+.dialog-cancel { background: transparent; }
+.danger-btn { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+.danger-btn:hover { background: var(--danger); filter: brightness(1.08); }
+@keyframes dialog-fade { from { opacity: 0; } }
+@keyframes dialog-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+
 /* ---------- names you can edit in place ---------- */
 #vault-grid .card-name, #vh-title, .vh-name { cursor: text; }
 #vault-grid .card-name { margin-left: -4px; padding: 0 4px; border-radius: 4px; }

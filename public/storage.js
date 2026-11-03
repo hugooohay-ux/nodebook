@@ -222,7 +222,7 @@ See also: [[Welcome]], [[Linking notes]].
       if (!incoming.length) return 0;
       const existing = new Set((await this.listNotes()).map((n) => n.path));
       const clashes = incoming.filter((n) => existing.has(n.path)).length;
-      if (clashes && !confirm(`${clashes} of ${incoming.length} notes already exist. Overwrite them?`)) return 0;
+      if (clashes && !(await Dialog.confirm(`${clashes} of ${incoming.length} notes already exist in this vault.`, { title: 'Overwrite existing notes?', okLabel: 'Overwrite', danger: true }))) return 0;
       await tx('readwrite', (s) => {
         for (const n of incoming) s.notes.put({ vault, ...n, mtime: Date.now() });
       });

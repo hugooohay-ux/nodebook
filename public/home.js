@@ -151,7 +151,8 @@ const Home = (() => {
     else if (act === 'rename') renameInPlace(id);
     else if (act === 'export') api.exportVault(id);
     else if (act === 'delete') {
-      if (confirm(`Delete "${v.name}" and its ${v.notes.length} notes? This can't be undone — export it first if you want a backup.`)) {
+      const ok = await Dialog.confirm(`“${v.name}” and its ${v.notes.length} notes will be deleted. This can't be undone — export it first if you want a backup.`, { title: 'Delete vault?', okLabel: 'Delete', danger: true });
+      if (ok) {
         await api.deleteVault(id);
         refresh();
       }
@@ -215,7 +216,7 @@ const Home = (() => {
       try {
         open(await api.importZipAsVault(input.files[0]));
       } catch (err) {
-        alert('Could not import that file: ' + err.message);
+        Dialog.alert(err.message, 'Could not import that file');
       }
     };
     input.click();
