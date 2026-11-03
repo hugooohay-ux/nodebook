@@ -118,6 +118,9 @@ async function openVault(info) {
 function showEmpty(msg) {
   state.view = 'empty';
   Graph.hide();
+  $('#title').value = '';
+  $('#title').disabled = true;
+  syncEditable();
   $('#empty-msg').textContent = msg;
   $('#empty').hidden = false;
   $('#note-view').hidden = true;
@@ -160,6 +163,7 @@ async function openNote(path, { push = true } = {}) {
   setView('note');
   const note = state.notes.get(path);
   $('#title').value = note.name;
+  $('#title').disabled = false;
   editor.load(note.content);
   setMode(state.mode);
   renderSidePanel();
@@ -338,6 +342,12 @@ function setView(view) {
   $('#btn-graph').classList.toggle('active', view === 'graph');
   if (view === 'graph') Graph.show();
   else Graph.hide();
+  syncEditable();
+}
+
+// Formatting toolbar only works while editing a note
+function syncEditable() {
+  document.body.classList.toggle('no-edit', state.view !== 'note' || state.mode !== 'edit');
 }
 
 function setMode(mode) {
@@ -345,7 +355,7 @@ function setMode(mode) {
   document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
   $('#editor').hidden = mode !== 'edit';
   $('#preview').hidden = mode !== 'preview';
-  document.body.classList.toggle('reading', mode === 'preview');
+  syncEditable();
   if (mode === 'preview') renderPreview();
   else editor.focus();
 }
@@ -389,12 +399,16 @@ function renderFileList() {
     li.className = 'note';
     li.dataset.path = n.path;
     li.title = n.path;
-    li.textContent = n.name;
-    if (dir) li.style.paddingLeft = '18px';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = n.name;
+    li.appendChild(name);
+    if (dir) li.style.paddingLeft = '20px';
     if (snippet) {
       const s = document.createElement('span');
       s.className = 'snippet';
       s.textContent = '…' + snippet;
+      li.classList.add('has-snippet');
       li.appendChild(s);
     }
     ul.appendChild(li);
@@ -543,6 +557,15 @@ $('#vault-name').addEventListener('click', async () => {
   document.title = `${name} – Nodebook`;
 });
 $('#btn-menu').addEventListener('click', () => document.body.classList.toggle('show-sidebar'));
+
+// Notes panel can be collapsed (remembered per browser)
+function setNotesCollapsed(collapsed) {
+  document.body.classList.toggle('notes-collapsed', collapsed);
+  try { localStorage.setItem('nodebook:notesCollapsed', collapsed ? '1' : ''); } catch { /* storage blocked */ }
+}
+$('#btn-collapse').addEventListener('click', () => setNotesCollapsed(true));
+$('#btn-expand').addEventListener('click', () => setNotesCollapsed(false));
+try { setNotesCollapsed(!!localStorage.getItem('nodebook:notesCollapsed')); } catch { /* storage blocked */ }
 $('#file-list').addEventListener('click', () => document.body.classList.remove('show-sidebar'));
 
 document.addEventListener('keydown', (e) => {

@@ -53,81 +53,93 @@
 
   <!-- ---------- inside a vault ---------- -->
   <div id="app" hidden>
-    <aside id="sidebar">
-      <div class="vault-row">
-        <a id="btn-home" class="icon" href="#/" title="All vaults">‹</a>
-        <span id="vault-name" title="Click to rename vault"></span>
+    <header id="topbar">
+      <button id="btn-menu" class="icon" title="Notes">☰</button>
+      <a id="btn-home" href="#/" title="All vaults">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg>
+      </a>
+      <div class="titles">
+        <input id="title" spellcheck="false" title="Rename note">
+        <div class="crumbs"><a href="#/">Vaults</a> › <span id="vault-name" title="Click to rename vault"></span></div>
+      </div>
+      <button id="btn-back" class="icon" title="Back (Alt+←)">‹</button>
+      <button id="btn-fwd" class="icon" title="Forward (Alt+→)">›</button>
+      <div class="seg">
+        <button data-mode="edit">Edit</button>
+        <button data-mode="preview">Read</button>
+      </div>
+      <button id="btn-graph" title="Graph view (Ctrl+G)">◉ Graph</button>
+      <span class="top-tools">
         <button id="btn-import" class="icon" title="Import .md or .zip files into this vault">⤒</button>
         <button id="btn-export" class="icon" title="Export vault as .zip">⤓</button>
         <button class="icon theme-toggle"></button>
+        <button id="btn-delete" class="icon danger" title="Delete note">🗑</button>
+      </span>
+    </header>
+
+    <div id="toolbar" role="toolbar" aria-label="Formatting">
+      <button data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
+      <button data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
+      <span class="sep"></span>
+      <select id="tb-style" title="Text style (Ctrl+Alt+0–3)">
+        <option value="0">Normal text</option>
+        <option value="1">Heading 1</option>
+        <option value="2">Heading 2</option>
+        <option value="3">Heading 3</option>
+      </select>
+      <span class="sep"></span>
+      <select id="tb-font" title="Font for viewing notes (Markdown files don't store fonts)">
+        <option value="sans">Sans</option>
+        <option value="serif">Serif</option>
+        <option value="mono">Mono</option>
+      </select>
+      <span class="sep"></span>
+      <div class="size" title="Text size for viewing notes">
+        <button data-size="-1" aria-label="Smaller text">−</button>
+        <span id="tb-size">16</span>
+        <button data-size="1" aria-label="Larger text">+</button>
       </div>
-      <div class="actions">
-        <button id="btn-new" title="New note (Alt+N)">＋ New note</button>
-        <button id="btn-graph" title="Graph view (Ctrl+G)">◉ Graph</button>
-      </div>
-      <input id="search" type="search" placeholder="Search notes…  Ctrl+P">
-      <ul id="file-list"></ul>
-    </aside>
+      <span class="sep"></span>
+      <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+      <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+      <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+      <button data-cmd="strike" title="Strikethrough (Ctrl+Shift+X)"><s>S</s></button>
+      <button data-cmd="code" title="Inline code"><code>&lt;/&gt;</code></button>
+      <span class="sep"></span>
+      <button data-cmd="link" title="Link to note (Ctrl+Enter)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="6" r="2.5"/><circle cx="15" cy="9" r="2.5"/><circle cx="8" cy="15" r="2.5"/><path d="M7.3 6.6 12.6 8.4M13.2 10.8 9.8 13.4"/></svg>
+      </button>
+      <span class="sep"></span>
+      <button data-cmd="bullet" title="Bulleted list (Ctrl+Shift+8)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="5" r="1.4"/><circle cx="4" cy="10" r="1.4"/><circle cx="4" cy="15" r="1.4"/><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+      </button>
+      <button data-cmd="number" title="Numbered list (Ctrl+Shift+7)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><text x="1.5" y="7.5">1</text><text x="1.5" y="17">2</text><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+      </button>
+      <button data-cmd="task" title="Checklist (Ctrl+Shift+9)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="4.5" height="4.5" rx="1"/><rect x="2" y="12" width="4.5" height="4.5" rx="1"/><path d="M9 5h8M9 14h8"/></svg>
+      </button>
+      <button data-cmd="quote" title="Quote">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v12M8 6h9M8 10h9M8 14h6"/></svg>
+      </button>
+    </div>
+
+    <div id="workspace">
+      <aside id="sidebar">
+        <div class="panel-head">
+          <button id="btn-collapse" class="icon" title="Hide notes panel">←</button>
+          <span>Notes</span>
+          <button id="btn-new" class="icon" title="New note (Alt+N)">＋</button>
+        </div>
+        <input id="search" type="search" placeholder="Search notes…  Ctrl+P">
+        <ul id="file-list"></ul>
+      </aside>
+      <button id="btn-expand" title="Show notes panel">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h8"/></svg>
+      </button>
 
     <main id="main">
       <section id="note-view" hidden>
-        <header id="note-header">
-          <button id="btn-menu" class="icon" title="Notes">☰</button>
-          <button id="btn-back" class="icon" title="Back (Alt+←)">‹</button>
-          <button id="btn-fwd" class="icon" title="Forward (Alt+→)">›</button>
-          <input id="title" spellcheck="false" title="Rename note">
-          <div class="seg">
-            <button data-mode="edit">Edit</button>
-            <button data-mode="preview">Read</button>
-          </div>
-          <button id="btn-delete" class="icon danger" title="Delete note">🗑</button>
-        </header>
-        <div id="toolbar" role="toolbar" aria-label="Formatting">
-          <button data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
-          <button data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
-          <span class="sep"></span>
-          <select id="tb-style" title="Text style (Ctrl+Alt+0–3)">
-            <option value="0">Normal text</option>
-            <option value="1">Heading 1</option>
-            <option value="2">Heading 2</option>
-            <option value="3">Heading 3</option>
-          </select>
-          <span class="sep"></span>
-          <select id="tb-font" title="Font for viewing notes (Markdown files don't store fonts)">
-            <option value="sans">Sans</option>
-            <option value="serif">Serif</option>
-            <option value="mono">Mono</option>
-          </select>
-          <span class="sep"></span>
-          <div class="size" title="Text size for viewing notes">
-            <button data-size="-1" aria-label="Smaller text">−</button>
-            <span id="tb-size">16</span>
-            <button data-size="1" aria-label="Larger text">+</button>
-          </div>
-          <span class="sep"></span>
-          <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
-          <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
-          <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
-          <button data-cmd="strike" title="Strikethrough (Ctrl+Shift+X)"><s>S</s></button>
-          <button data-cmd="code" title="Inline code"><code>&lt;/&gt;</code></button>
-          <span class="sep"></span>
-          <button data-cmd="link" title="Link to note (Ctrl+Enter)">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="6" r="2.5"/><circle cx="15" cy="9" r="2.5"/><circle cx="8" cy="15" r="2.5"/><path d="M7.3 6.6 12.6 8.4M13.2 10.8 9.8 13.4"/></svg>
-          </button>
-          <span class="sep"></span>
-          <button data-cmd="bullet" title="Bulleted list (Ctrl+Shift+8)">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="5" r="1.4"/><circle cx="4" cy="10" r="1.4"/><circle cx="4" cy="15" r="1.4"/><path d="M8 5h9M8 10h9M8 15h9"/></svg>
-          </button>
-          <button data-cmd="number" title="Numbered list (Ctrl+Shift+7)">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><text x="1.5" y="7.5">1</text><text x="1.5" y="17">2</text><path d="M8 5h9M8 10h9M8 15h9"/></svg>
-          </button>
-          <button data-cmd="task" title="Checklist (Ctrl+Shift+9)">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="4.5" height="4.5" rx="1"/><rect x="2" y="12" width="4.5" height="4.5" rx="1"/><path d="M9 5h8M9 14h8"/></svg>
-          </button>
-          <button data-cmd="quote" title="Quote">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v12M8 6h9M8 10h9M8 14h6"/></svg>
-          </button>
-        </div>
         <div id="content">
           <div id="editor"></div>
           <div id="preview"><article class="page markdown"></article></div>
@@ -165,6 +177,7 @@
       <ul id="outlinks"></ul>
       <div id="stats"></div>
     </aside>
+    </div>
   </div>
 
   <div id="toast" role="status" hidden></div>
