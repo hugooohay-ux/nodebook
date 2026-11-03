@@ -23,6 +23,8 @@ const Graph = (() => {
   const positions = new Map(); // survives rebuilds so the layout doesn't jump
   const pins = new Map(); // notes placed by hand: id -> { x, y }, saved with the vault
   const held = new Set(); // notes dropped somewhere by hand this session (stay put, not saved)
+  const guide = new Map(); // while dragging: where notes are gliding to so lines stop overlapping (id -> [x, y])
+  let lastLive = 0;
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
   let visible = false;
@@ -220,6 +222,11 @@ const Graph = (() => {
       if (v > 40) { p.vx *= 40 / v; p.vy *= 40 / v; }
       p.x += p.vx;
       p.y += p.vy;
+      const target = guide.get(p.id); // gliding out of the way of overlapping lines while you drag
+      if (target) {
+        p.x += (target[0] - p.x) * 0.12;
+        p.y += (target[1] - p.y) * 0.12;
+      }
     }
     // Notes never overlap: anything closer than their sizes allow is moved apart directly
     for (let i = 0; i < n; i++) {
@@ -301,7 +308,7 @@ const Graph = (() => {
         if (Math.abs(p.x - q.x) < (p.labelW + q.labelW) / 2 + 6 && Math.abs(p.y + radius(p) - q.y - radius(q)) < 16) labelsOverlap++;
       }
     }
-    return countCrossings() * 1000 + lineThroughNote * 50 + labelsOverlap * 5;
+    return countCrossings() * 1000 + stackedNotes() * 500 + lineThroughNote * 50 + labelsOverlap * 5;
   }
   const snapshot = () => new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
   const restore = (snap) => { for (const n of nodes) [n.x, n.y] = snap.get(n.id); };
@@ -351,6 +358,14 @@ const Graph = (() => {
   // side. Each move is kept only if it makes things cleaner; repeat until nothing overlaps.
   function troubleNotes(onlyOverlaps = false) {
     const out = new Set();
+    // notes on top of each other
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const p = nodes[i];
+        const q = nodes[j];
+        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 8) { out.add(p); out.add(q); }
+      }
+    }
     for (let i = 0; i < edges.length; i++) {
       for (let j = i + 1; j < edges.length; j++) {
         const [p, q] = edges[i];
@@ -371,7 +386,7 @@ const Graph = (() => {
       }
     }
     // Small notes first: they're the cheapest to move
-    return [...out].filter((n) => !n.pinned && !held.has(n.id)).sort((a, b) => a.deg - b.deg || a.size - b.size);
+    return [...out].filter((n) => !isHeld(n)).sort((a, b) => a.deg - b.deg || a.size - b.size);
   }
 
   // Messiness plus a cost for lines much longer than usual, so a fix never flings a note far away.
@@ -394,9 +409,22 @@ const Graph = (() => {
     return untidiness() + offCentre * 0.1;
   }
 
-  // Lines that overlap something: two lines crossing, or a line running through a note
+  // Notes on top of (or touching) each other
+  function stackedNotes() {
+    let k = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const p = nodes[i];
+        const q = nodes[j];
+        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 8) k++;
+      }
+    }
+    return k;
+  }
+
+  // Overlaps: two lines crossing, a line running through a note, or notes on top of each other
   function overlaps() {
-    let k = countCrossings();
+    let k = countCrossings() + stackedNotes();
     for (const [p, q] of edges) {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
@@ -410,19 +438,55 @@ const Graph = (() => {
     return k;
   }
 
-  // After a change (a drop, a slider): the graph freezes in the shape it has right now. Only if a line
-  // overlaps something do the notes involved move — as little as possible, keeping that shape — animated.
+  // While you drag (a few times a second): if something overlaps, work out where the notes involved should
+  // go and let them glide there, so the graph untangles while you're still moving instead of after
+  function liveTidy() {
+    const now = performance.now();
+    if (now - lastLive < 120) return;
+    lastLive = now;
+    if (!overlaps()) return; // keep any glides already under way; nothing new to fix
+    const snap = snapshot();
+    improve(25, true);
+    for (const n of nodes) {
+      const [x, y] = snap.get(n.id);
+      if (Math.hypot(n.x - x, n.y - y) > 0.5) guide.set(n.id, [n.x, n.y]);
+    }
+    restore(snap);
+  }
+
+  // After a change (a drop, a slider): work out a clean layout right away, then animate everything from
+  // where it is now to where it ends up, in one smooth movement. Two candidates, the cleaner one wins:
+  //  A) everything relaxes from where it is, then gets repaired note by note (the smaller change)
+  //  B) a fresh clean layout around the note you dropped (only if it's clearly cleaner)
+  // Notes already gliding out of the way while you dragged start from where they were heading.
   function settleAndTidy() {
     for (const n of nodes) {
       if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
     }
-    alpha = 0; // stop exactly as it is
-    for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
-    if (!overlaps()) return; // nothing overlaps: nothing moves
     const from = snapshot();
-    const swings = improve(250, true);
+    for (const [id, [x, y]] of guide) {
+      const n = byId.get(id);
+      if (n && !isHeld(n)) { n.x = x; n.y = y; n.vx = 0; n.vy = 0; }
+    }
+    const continuing = guide.size > 0;
+    guide.clear();
+    alpha = 1;
+    const until = performance.now() + 100;
+    while (alpha > 0.005 && performance.now() < until) tick();
+    alpha = 0;
+    let swings = improve(120);
+    const scoreA = repairScore();
+    if (untidiness() > 0.5) {
+      const posA = snapshot();
+      searchLayout(160);
+      const swingsB = improve(90);
+      const scoreB = repairScore();
+      if (scoreB < scoreA * 0.7 - 10) swings = swingsB;
+      else restore(posA);
+    }
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
-    animateFrom(from, swings);
+    // notes already gliding finish with an ease-out, so they don't stop and start again
+    animateFrom(from, swings, continuing ? { dur: 700, ease: 'out' } : {});
   }
 
   // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
@@ -430,7 +494,7 @@ const Graph = (() => {
   function improve(budgetMs, minimal = false) {
     const until = performance.now() + budgetMs;
     const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
-    const free = (n) => !n.pinned && !held.has(n.id);
+    const free = (n) => !isHeld(n); // the note in your hand, pinned notes and the last dropped one stay put
     const evaluate = minimal ? () => overlaps() * 1000 : repairScore;
     const moveCost = minimal ? 2 : 0.01; // per pixel moved
     let score = evaluate();
@@ -499,7 +563,7 @@ const Graph = (() => {
 
   // Animate: each moved note swings round the note it's attached to (along an arc, not a straight line),
   // a parent's branch rides along with it, and notes further out the tree start a little later
-  function animateFrom(start, swingsAround) {
+  function animateFrom(start, swingsAround, { dur = 1400, ease = 'inout' } = {}) {
     const now = performance.now();
     const moved = nodes.filter((n) => {
       const [sx, sy] = start.get(n.id);
@@ -527,7 +591,7 @@ const Graph = (() => {
       const [sx, sy] = start.get(n.id);
       const [gx, gy] = end.get(n.id);
       const anchor = byId.get(swingsAround.get(n.id)) || null;
-      const anim = { sx, sy, gx, gy, t0: now + stepsOut(n) * 180, dur: 1400, anchor };
+      const anim = { sx, sy, gx, gy, t0: now + (ease === 'out' ? 0 : stepsOut(n) * 180), dur, ease, anchor };
       if (anchor) {
         const [asx, asy] = start.get(anchor.id);
         const [agx, agy] = end.get(anchor.id);
@@ -546,7 +610,8 @@ const Graph = (() => {
   // Where an animating note is this frame (its anchor may be moving too, so the branch follows it)
   function animAt(n, now, stack = new Set()) {
     const a = n.anim;
-    const e = easeInOut(Math.min(1, Math.max(0, (now - a.t0) / a.dur)));
+    const t = Math.min(1, Math.max(0, (now - a.t0) / a.dur));
+    const e = a.ease === 'out' ? 1 - Math.pow(1 - t, 3) : easeInOut(t);
     if (a.anchor && a.r0 !== undefined && !stack.has(a.anchor.id)) {
       stack.add(n.id);
       const [ax, ay] = a.anchor.anim ? animAt(a.anchor, now, stack) : [a.anchor.x, a.anchor.y];
@@ -792,6 +857,7 @@ const Graph = (() => {
   function loop() {
     if (!visible) return;
     if (alpha > 0.003) tick();
+    if (drag?.node) liveTidy();
     glide();
     if (fitPending && alpha < 0.3) { fit(); fitPending = false; }
     draw();
@@ -837,6 +903,7 @@ const Graph = (() => {
       if (n) {
         alpha = Math.max(alpha, 0.3); // linked notes follow while you drag, like Obsidian
         for (const m of nodes) m.anim = null; // a new drag takes over from any repair still animating
+        guide.clear();
       }
     });
     window.addEventListener('pointermove', (e) => {
