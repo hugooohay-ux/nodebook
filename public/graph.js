@@ -202,9 +202,17 @@ const Graph = (() => {
         p.vy += (c.y / c.n - p.y) * 0.02 * a;
       }
     }
+    // Pull towards the middle of the graph: big notes strongly, small ones loosely, so the biggest note sits
+    // in the centre with the rest spread around it like a web
+    let mx = 0;
+    let my = 0;
+    for (const p of nodes) { mx += p.x; my += p.y; }
+    mx /= nodes.length || 1;
+    my /= nodes.length || 1;
     for (const p of nodes) {
-      p.vx -= p.x * 0.004 * a;
-      p.vy -= p.y * 0.004 * a;
+      const g = 0.003 + 0.05 * (p.size || 0);
+      p.vx -= (p.x - mx) * g * a;
+      p.vy -= (p.y - my) * g * a;
       if (isHeld(p)) { p.vx = p.vy = 0; continue; }
       p.vx *= 0.6;
       p.vy *= 0.6;
@@ -295,30 +303,46 @@ const Graph = (() => {
     }
     return countCrossings() * 1000 + lineThroughNote * 50 + labelsOverlap * 5;
   }
-  function findCleanLayout(budgetMs = 400) {
+  const snapshot = () => new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+  const restore = (snap) => { for (const n of nodes) [n.x, n.y] = snap.get(n.id); };
+
+  // Try many starting arrangements for the notes that may move, let each settle, keep the cleanest
+  // (fewest crossings, lines through notes, overlapping labels and overly long lines)
+  function searchLayout(budgetMs) {
     const until = performance.now() + budgetMs;
     const free = nodes.filter((n) => !n.pinned && !held.has(n.id));
     if (!free.length) return;
     const spread = Math.sqrt(nodes.length) * 60;
+    // centre the search on any notes that are fixed, so the rest grows around them
+    const fixed = nodes.filter((n) => n.pinned || held.has(n.id));
+    const cx = fixed.length ? fixed.reduce((s, n) => s + n.x, 0) / fixed.length : 0;
+    const cy = fixed.length ? fixed.reduce((s, n) => s + n.y, 0) / fixed.length : 0;
     let best = null;
     let bestScore = Infinity;
     for (let seed = 1; ; seed++) {
       let s = seed * 7919;
       const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
-      for (const n of free) Object.assign(n, { x: (rand() - 0.5) * spread, y: (rand() - 0.5) * spread, vx: 0, vy: 0 });
+      for (const n of free) Object.assign(n, { x: cx + (rand() - 0.5) * spread, y: cy + (rand() - 0.5) * spread, vx: 0, vy: 0 });
       alpha = 1;
       for (let i = 0; i < 400 && alpha > 0.005; i++) tick();
-      const score = messiness();
+      const score = repairScore();
       if (score < bestScore) {
         bestScore = score;
-        best = free.map((n) => [n, n.x, n.y]);
+        best = snapshot();
       }
-      if (bestScore === 0 || performance.now() > until) break;
+      if (untidiness() === 0) break; // clean (and the pull to the middle keeps it web-like)
+      if (performance.now() > until) break;
     }
-    for (const [n, x, y] of best) Object.assign(n, { x, y, vx: 0, vy: 0 });
+    restore(best);
+    alpha = 0;
+  }
+
+  // Opening the graph / Reset layout: a fresh clean layout (animated from `from` if given)
+  function findCleanLayout(budgetMs = 400, from = null) {
+    searchLayout(budgetMs);
+    const swings = improve(300);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
-    alpha = 0; // settled and clean: stay still
-    repair(); // whatever couldn't be avoided, fix note by note
+    if (from) animateFrom(from, swings);
   }
 
   // ---------- repairing a layout ----------
@@ -338,6 +362,8 @@ const Graph = (() => {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
       const len2 = dx * dx + dy * dy || 1;
+      // overly long lines are trouble too
+      if (Math.sqrt(len2) > settings.dist * 2.5) [p, q].forEach((n) => out.add(n));
       for (const m of nodes) {
         if (m === p || m === q) continue;
         const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
@@ -348,34 +374,60 @@ const Graph = (() => {
     return [...out].filter((n) => !n.pinned && !held.has(n.id)).sort((a, b) => a.deg - b.deg || a.size - b.size);
   }
 
-  // Messiness plus a cost for lines much longer than usual, so a fix never flings a note far away
-  function repairScore() {
+  // Messiness plus a cost for lines much longer than usual, so a fix never flings a note far away.
+  // 0 means clean.
+  function untidiness() {
     let stretch = 0;
     for (const [p, q] of edges) stretch += Math.max(0, Math.hypot(q.x - p.x, q.y - p.y) - settings.dist * 2.5);
     return messiness() + stretch * 2;
   }
+  // For choosing between layouts: untidiness, plus a nudge towards the biggest notes being central
+  function repairScore() {
+    // big notes away from the middle look less like a web
+    let mx = 0;
+    let my = 0;
+    for (const n of nodes) { mx += n.x; my += n.y; }
+    mx /= nodes.length || 1;
+    my /= nodes.length || 1;
+    let offCentre = 0;
+    for (const n of nodes) offCentre += (n.size || 0) * Math.hypot(n.x - mx, n.y - my);
+    return untidiness() + offCentre * 0.1;
+  }
 
-  // After a change (a drop, a slider): work out the settled, repaired layout right away, then animate
-  // everything from where it is now to where it ends up, in one smooth movement
+  // After a change (a drop, a slider): work out a clean layout right away, then animate everything from
+  // where it is now to where it ends up, in one smooth movement. Two candidates, the cleaner one wins:
+  //  A) everything relaxes from where it is, then gets repaired note by note (the smaller change)
+  //  B) a fresh clean layout around the note you dropped (only if it's clearly cleaner)
   function settleAndTidy() {
     for (const n of nodes) {
       if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
     }
-    const from = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
-    alpha = Math.max(alpha, 0.3);
-    const until = performance.now() + 150;
+    const from = snapshot();
+    alpha = 1;
+    const until = performance.now() + 100;
     while (alpha > 0.005 && performance.now() < until) tick();
     alpha = 0;
-    repair(300, from);
+    let swings = improve(120);
+    const scoreA = repairScore();
+    if (untidiness() > 0.5) {
+      const posA = snapshot();
+      searchLayout(160);
+      const swingsB = improve(90);
+      const scoreB = repairScore();
+      if (scoreB < scoreA * 0.7 - 10) swings = swingsB;
+      else restore(posA);
+    }
+    for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+    animateFrom(from, swings);
   }
 
-  function repair(budgetMs = 300, from = null) {
+  // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
+  function improve(budgetMs) {
     const until = performance.now() + budgetMs;
-    const start = from || new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
     const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
     const free = (n) => !n.pinned && !held.has(n.id);
     let score = repairScore();
-    const clean = () => countCrossings() === 0 && messiness() === 0;
+    const clean = () => untidiness() < 0.5;
     // End notes first; only if that isn't enough, notes with more links
     for (const maxLinks of [1, 2, 3, Infinity]) {
       let improved = true;
@@ -398,7 +450,7 @@ const Graph = (() => {
           let bestPos = null;
           let bestAnchor = null;
           let best = score;
-          // Try spots around each note it links to: many angles, at its current distance and a bit further out
+          // Try spots around each note it links to: many angles, at normal link length and its current distance
           for (const anchor of anchors) {
             const r0 = Math.max(settings.dist, Math.hypot(ox - anchor.x, oy - anchor.y));
             for (const r of [settings.dist, settings.dist * 1.6, r0, r0 * 1.4]) {
@@ -428,13 +480,29 @@ const Graph = (() => {
       }
       if (clean()) break;
     }
-    // Animate: each moved note swings round the note it's attached to (along an arc, not a straight line),
-    // a parent's branch rides along with it, and notes further out the tree start a little later
+    return swingsAround;
+  }
+
+  // Kept for the panel's "tidy" use: repair in place and animate
+  function repair(budgetMs = 300) {
+    const from = snapshot();
+    animateFrom(from, improve(budgetMs));
+  }
+
+  // Animate: each moved note swings round the note it's attached to (along an arc, not a straight line),
+  // a parent's branch rides along with it, and notes further out the tree start a little later
+  function animateFrom(start, swingsAround) {
     const now = performance.now();
     const moved = nodes.filter((n) => {
       const [sx, sy] = start.get(n.id);
       return Math.hypot(n.x - sx, n.y - sy) > 0.5;
     });
+    // Notes that moved without a recorded anchor swing around their biggest linked note
+    for (const n of moved) {
+      if (swingsAround.has(n.id)) continue;
+      const parent = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && (m.size > n.size || (m.size === n.size && m.deg > n.deg))).sort((a, b) => b.size - a.size)[0];
+      if (parent) swingsAround.set(n.id, parent.id);
+    }
     const isMoving = new Set(moved.map((n) => n.id));
     const stepsOut = (n) => {
       // how many moving notes it hangs off (for the stagger); guards against loops
@@ -446,13 +514,7 @@ const Graph = (() => {
       }
       return k;
     };
-    // Notes that moved only because the graph settled swing around their biggest linked note
-    for (const n of moved) {
-      if (swingsAround.has(n.id)) continue;
-      const parent = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && (m.size > n.size || (m.size === n.size && m.deg > n.deg))).sort((a, b) => b.size - a.size)[0];
-      if (parent) swingsAround.set(n.id, parent.id);
-    }
-    const end = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    const end = snapshot();
     for (const n of moved) {
       const [sx, sy] = start.get(n.id);
       const [gx, gy] = end.get(n.id);
@@ -470,7 +532,6 @@ const Graph = (() => {
     }
     for (const n of moved) [n.x, n.y] = start.get(n.id);
   }
-
   // Gentle ease in and out (no rush in the middle)
   const easeInOut = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
 
@@ -846,8 +907,8 @@ const Graph = (() => {
       held.clear();
       for (const n of nodes) n.pinned = false;
       savePins();
-      findCleanLayout();
-      fit();
+      const from = snapshot();
+      findCleanLayout(400, from);
     });
   }
 
