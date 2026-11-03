@@ -8,6 +8,10 @@ const Graph = (() => {
     COLORS = { bg: v('--bg'), node: v('--node'), unresolved: v('--unresolved'), accent: v('--accent'), edge: v('--edge'), edgeHi: v('--accent'), label: v('--text') };
   }
 
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let lastFrame = 0;
+  let fade = 0; // 0..1, how strongly the rest of the graph is dimmed around the focused node
+
   let canvas, ctx, opts;
   let nodes = [];
   let edges = [];
@@ -151,51 +155,126 @@ const Graph = (() => {
     ctx.setTransform(dpr * cam.k, 0, 0, dpr * cam.k, dpr * (w / 2 + cam.x), dpr * (h / 2 + cam.y));
 
     const focus = hover || (drag && drag.node) || null;
-    const lit = focus ? new Set([focus.id, ...focus.nbrs]) : null;
     const q = settings.filter.toLowerCase();
     const match = (n) => !q || n.label.toLowerCase().includes(q);
 
-    ctx.lineWidth = 1 / cam.k;
+    // Ease every highlight value toward its target so hover changes animate
+    const now = performance.now();
+    const dt = Math.min(64, now - (lastFrame || now));
+    lastFrame = now;
+    const ease = reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 90);
+    fade += ((focus ? 1 : 0) - fade) * ease;
+    for (const n of nodes) {
+      n.hot = (n.hot || 0) + ((n === focus ? 1 : 0) - (n.hot || 0)) * ease;
+      n.nb = (n.nb || 0) + ((focus && focus.nbrs.has(n.id) ? 1 : 0) - (n.nb || 0)) * ease;
+    }
+    // How visible a node is: dimmed when something else is focused, unless it's a neighbour
+    const vis = (n) => (1 - fade * 0.82 * (1 - Math.max(n.hot, n.nb))) * (match(n) ? 1 : 0.2);
+    const t = reducedMotion.matches ? 0 : now / 1000;
+
+    // Edges: base line, then an accent overlay that fades in on edges touching the focused node
     for (const [p, r] of edges) {
-      const on = focus && (p === focus || r === focus);
-      ctx.strokeStyle = on ? COLORS.edgeHi : COLORS.edge;
-      ctx.globalAlpha = lit && !on ? 0.25 : q && !(match(p) && match(r)) ? 0.25 : 1;
-      ctx.lineWidth = (on ? 1.6 : 1) / cam.k;
+      const on = Math.max(p.hot, r.hot);
+      ctx.globalAlpha = Math.min(vis(p), vis(r)) * (1 - on);
+      ctx.strokeStyle = COLORS.edge;
+      ctx.lineWidth = 1 / cam.k;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(r.x, r.y);
       ctx.stroke();
-    }
-
-    for (const n of nodes) {
-      const dim = (lit && !lit.has(n.id)) || !match(n);
-      ctx.globalAlpha = dim ? 0.2 : 1;
-      ctx.fillStyle = n.id === current || n === focus || (q && match(n)) ? COLORS.accent : n.unresolved ? COLORS.unresolved : COLORS.node;
+      if (on < 0.01) continue;
+      // Draw from the focused node outward so the flowing dashes travel away from it
+      const [a, b] = p.hot >= r.hot ? [p, r] : [r, p];
+      ctx.globalAlpha = on * 0.9;
+      ctx.strokeStyle = COLORS.edgeHi;
+      ctx.lineWidth = (1 + on * 1.2) / cam.k;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, radius(n), 0, Math.PI * 2);
-      ctx.fill();
-      if (n.id === current) {
-        ctx.strokeStyle = COLORS.accent;
-        ctx.lineWidth = 2 / cam.k;
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      if (!reducedMotion.matches) {
+        ctx.globalAlpha = on;
+        ctx.lineWidth = (2.2 + on) / cam.k;
+        ctx.setLineDash([2 / cam.k, 14 / cam.k]);
+        ctx.lineDashOffset = -t * 28 / cam.k;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(n.x, n.y, radius(n) + 4 / cam.k, 0, Math.PI * 2);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
         ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineCap = 'butt';
       }
     }
 
-    // Labels: fade in with zoom, always show for highlighted nodes
+    for (const n of nodes) {
+      const r = radius(n) * (1 + n.hot * 0.45 + n.nb * 0.15);
+      const v = vis(n);
+
+      // Soft glow behind the focused node and (fainter) its neighbours
+      const glow = Math.max(n.hot, n.nb * 0.45);
+      if (glow > 0.01) {
+        const g = ctx.createRadialGradient(n.x, n.y, r * 0.6, n.x, n.y, r * 3.2);
+        g.addColorStop(0, COLORS.accent);
+        g.addColorStop(1, 'transparent');
+        ctx.globalAlpha = glow * 0.35;
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const accented = n.id === current || (q && match(n));
+      ctx.globalAlpha = v;
+      ctx.fillStyle = accented ? COLORS.accent : n.unresolved ? COLORS.unresolved : COLORS.node;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Tint toward the accent colour as the node lights up
+      const tint = accented ? 0 : Math.max(n.hot, n.nb * 0.55);
+      if (tint > 0.01) {
+        ctx.globalAlpha = tint;
+        ctx.fillStyle = COLORS.accent;
+        ctx.fill();
+      }
+
+      if (n.id === current) {
+        ctx.globalAlpha = v;
+        ctx.strokeStyle = COLORS.accent;
+        ctx.lineWidth = 2 / cam.k;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 4 / cam.k, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Expanding ripple rings around the hovered node
+      if (n.hot > 0.01 && !reducedMotion.matches) {
+        for (let i = 0; i < 2; i++) {
+          const phase = (t * 0.8 + i / 2) % 1;
+          ctx.globalAlpha = n.hot * (1 - phase) * 0.7;
+          ctx.strokeStyle = COLORS.accent;
+          ctx.lineWidth = 1.5 / cam.k;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r + (3 + phase * 16) / cam.k, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Labels: fade in with zoom; the focused node's label grows and lifts, neighbours' fade in
     const zoomAlpha = Math.min(1, Math.max(0, (cam.k - 0.45) / 0.35));
-    ctx.font = `${12 / cam.k}px "Segoe UI", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillStyle = COLORS.label;
     for (const n of nodes) {
-      const important = (lit && lit.has(n.id)) || n.id === current || (q && match(n));
-      const dim = (lit && !lit.has(n.id)) || !match(n);
-      const a = important ? 1 : dim ? zoomAlpha * 0.2 : zoomAlpha * 0.85;
+      const base = n.id === current || (q && match(n)) ? 1 : zoomAlpha * 0.85;
+      const a = Math.max(base * vis(n), n.hot, n.nb);
       if (a <= 0.02) continue;
+      const size = 12 + n.hot * 3;
+      ctx.font = `${n.hot > 0.5 ? 600 : 400} ${size / cam.k}px "Segoe UI", sans-serif`;
       ctx.globalAlpha = a;
-      ctx.fillText(n.label, n.x, n.y + radius(n) + 3 / cam.k);
+      const r = radius(n) * (1 + n.hot * 0.45 + n.nb * 0.15);
+      ctx.fillText(n.label, n.x, n.y + r + (3 + n.hot * 4) / cam.k);
     }
     ctx.globalAlpha = 1;
   }
