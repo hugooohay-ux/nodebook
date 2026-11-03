@@ -172,7 +172,7 @@ const Graph = (() => {
     const vis = (n) => (1 - fade * 0.82 * (1 - Math.max(n.hot, n.nb))) * (match(n) ? 1 : 0.2);
     const t = reducedMotion.matches ? 0 : now / 1000;
 
-    // Edges: base line, then an accent overlay that fades in on edges touching the focused node
+    // Edges: base line, then a static accent overlay on edges touching the focused node
     for (const [p, r] of edges) {
       const on = Math.max(p.hot, r.hot);
       ctx.globalAlpha = Math.min(vis(p), vis(r)) * (1 - on);
@@ -183,28 +183,13 @@ const Graph = (() => {
       ctx.lineTo(r.x, r.y);
       ctx.stroke();
       if (on < 0.01) continue;
-      // Draw from the focused node outward so the flowing dashes travel away from it
-      const [a, b] = p.hot >= r.hot ? [p, r] : [r, p];
       ctx.globalAlpha = on * 0.9;
       ctx.strokeStyle = COLORS.edgeHi;
       ctx.lineWidth = (1 + on * 1.2) / cam.k;
       ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(r.x, r.y);
       ctx.stroke();
-      if (!reducedMotion.matches) {
-        ctx.globalAlpha = on;
-        ctx.lineWidth = (2.2 + on) / cam.k;
-        ctx.setLineDash([2 / cam.k, 14 / cam.k]);
-        ctx.lineDashOffset = -t * 28 / cam.k;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.lineCap = 'butt';
-      }
     }
 
     for (const n of nodes) {
