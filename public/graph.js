@@ -224,8 +224,8 @@ const Graph = (() => {
       p.y += p.vy;
       const target = guide.get(p.id); // gliding out of the way of overlapping lines while you drag
       if (target) {
-        p.x += (target[0] - p.x) * 0.12;
-        p.y += (target[1] - p.y) * 0.12;
+        p.x += (target[0] - p.x) * 0.035; // slow glide, not a jump
+        p.y += (target[1] - p.y) * 0.035;
       }
     }
     // Notes never overlap: anything closer than their sizes allow is moved apart directly
@@ -486,7 +486,7 @@ const Graph = (() => {
     }
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     // notes already gliding finish with an ease-out, so they don't stop and start again
-    animateFrom(from, swings, continuing ? { dur: 700, ease: 'out' } : {});
+    animateFrom(from, swings, continuing ? { dur: 1600, ease: 'out' } : {});
   }
 
   // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
@@ -563,7 +563,7 @@ const Graph = (() => {
 
   // Animate: each moved note swings round the note it's attached to (along an arc, not a straight line),
   // a parent's branch rides along with it, and notes further out the tree start a little later
-  function animateFrom(start, swingsAround, { dur = 1400, ease = 'inout' } = {}) {
+  function animateFrom(start, swingsAround, { dur = 2200, ease = 'inout' } = {}) {
     const now = performance.now();
     const moved = nodes.filter((n) => {
       const [sx, sy] = start.get(n.id);
@@ -591,7 +591,7 @@ const Graph = (() => {
       const [sx, sy] = start.get(n.id);
       const [gx, gy] = end.get(n.id);
       const anchor = byId.get(swingsAround.get(n.id)) || null;
-      const anim = { sx, sy, gx, gy, t0: now + (ease === 'out' ? 0 : stepsOut(n) * 180), dur, ease, anchor };
+      const anim = { sx, sy, gx, gy, t0: now + (ease === 'out' ? 0 : stepsOut(n) * 260), dur, ease, anchor };
       if (anchor) {
         const [asx, asy] = start.get(anchor.id);
         const [agx, agy] = end.get(anchor.id);
