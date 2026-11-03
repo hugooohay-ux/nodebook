@@ -36,7 +36,7 @@ const Graph = (() => {
   function rebuild() {
     const { notes, links, current } = opts.getData();
     const map = new Map();
-    const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set() });
+    const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set(), up: new Set() });
     for (const n of notes.values()) map.set(n.path, node(n.path, n.name, false));
 
     const es = [];
@@ -49,9 +49,9 @@ const Graph = (() => {
           id = '?' + l.target.toLowerCase();
           if (!map.has(id)) map.set(id, node(id, l.target, true));
         }
-        // Links point up: a note sits under every note it links to ("Part of" is the same, just not in the text),
-        // so a hover chain flows from a note down to the notes that link to it
+        // Remember which way each link was written, so a hover chain can follow links in one direction at a time
         map.get(id).down.add(src);
+        map.get(src).up.add(id);
         const key = src < id ? src + '\n' + id : id + '\n' + src;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -99,14 +99,14 @@ const Graph = (() => {
     alpha = Math.max(alpha, 0.5);
   }
 
-  // Everything reachable going *down* from a note, with how many steps away it is
-  function chainFrom(start) {
+  // Notes reachable from `start` by following links in one direction only ('down' or 'up'), with steps away
+  function walk(start, dir) {
     const depth = new Map([[start.id, 0]]);
     let frontier = [start];
     while (frontier.length) {
       const next = [];
       for (const n of frontier) {
-        for (const id of n.down) {
+        for (const id of n[dir]) {
           const m = byId.get(id);
           if (m && !depth.has(id)) {
             depth.set(id, depth.get(n.id) + 1);
@@ -117,6 +117,16 @@ const Graph = (() => {
       frontier = next;
     }
     return depth;
+  }
+
+  // The hover chain: the line of notes above a note plus the line below it — never sideways,
+  // so a sibling (reached only by going up and then back down) stays dark
+  function chainFrom(start) {
+    const below = walk(start, 'down');
+    const above = walk(start, 'up');
+    const all = new Map(below);
+    for (const [id, d] of above) all.set(id, Math.min(d, all.get(id) ?? Infinity));
+    return { all, below, above };
   }
 
   // ---------- simulation ----------
@@ -194,21 +204,25 @@ const Graph = (() => {
     const ease = reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 90);
     fade += ((focus ? 1 : 0) - fade) * ease;
 
-    // Hovering lights up the chain below the node, one step at a time, never the notes above it
+    // Hovering lights up the line above and below the node, one step at a time outward
     if (focus !== chainFor) {
       chainFor = focus;
-      chain = focus ? chainFrom(focus) : null;
+      const c = focus ? chainFrom(focus) : null;
+      chain = c?.all || null;
       chainSince = now;
       for (const e of edges) {
-        // A highlighted edge points down the chain; links pointing back up it stay dark
+        // A highlighted edge continues one of the two lines, pointing away from the hovered note
         const [p, r] = e;
         e.from = e.to = null;
-        if (!chain) continue;
-        const dp = chain.get(p.id);
-        const dr = chain.get(r.id);
-        if (dp === undefined || dr === undefined) continue;
-        if (p.down.has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
-        else if (r.down.has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
+        if (!c) continue;
+        for (const [dir, depth] of [['down', c.below], ['up', c.above]]) {
+          const dp = depth.get(p.id);
+          const dr = depth.get(r.id);
+          if (dp === undefined || dr === undefined) continue;
+          if (p[dir].has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
+          else if (r[dir].has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
+          if (e.to) break;
+        }
       }
     }
     const step = reducedMotion.matches ? 0 : STEP_MS;
@@ -465,7 +479,7 @@ const Graph = (() => {
     chainOf(id) {
       const n = byId.get(id);
       if (!n) return [];
-      return [...chainFrom(n)].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
+      return [...chainFrom(n).all].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
     },
     // Forget the layout when switching vaults
     reset() {

@@ -25,9 +25,9 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Backlinks (with context) and outgoing links for every note
 - "Part of" parents, set from a bar above each note. Stored as `up:` properties (the format Obsidian's
   Breadcrumbs plugin reads), hidden in the editor. The parent lists the note under Sub-notes.
-- Links point up: writing `[[Parent]]` in a note puts the note under Parent. Hovering a note in the graph
-  lights up the chain below it (everything that links to it, and so on down — never upward or sideways),
-  one step at a time with arrows
+- Hovering a note in the graph lights up its line in both directions — the notes it leads to and the notes
+  that lead to it, step by step — but never sideways (a sibling under the same parent stays dark).
+  It doesn't matter which of two notes writes the link.
 - Renaming a note updates links to it across the vault
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter

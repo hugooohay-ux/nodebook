@@ -695,7 +695,6 @@ function linkContext(content, targetPath) {
   return '';
 }
 
-// Links point up: a note sits under every note it links to (or is "part of"), and above every note that links to it
 function renderSidePanel() {
   const ol = $('#outlinks');
   ol.innerHTML = '';
@@ -707,13 +706,13 @@ function renderSidePanel() {
     ul.appendChild(li);
   };
 
-  // Under this note: everything that links here (Part-of entries are links too)
+  // Links here: everything that links to this note (Part-of entries are links too)
   const subs = [];
   if (cur) for (const [p, links] of state.links) if (p !== cur && links.some((l) => l.resolved === cur)) subs.push(p);
   const sl = $('#subnotes');
   sl.innerHTML = '';
   $('#sub-count').textContent = subs.length ? `(${subs.length})` : '';
-  if (!subs.length) none(sl, cur ? 'Nothing yet — link to this note from another one' : '—');
+  if (!subs.length) none(sl, cur ? 'No notes link here yet' : '—');
   for (const p of subs.sort()) {
     const li = document.createElement('li');
     li.dataset.open = p;
@@ -729,9 +728,9 @@ function renderSidePanel() {
     sl.appendChild(li);
   }
 
-  // Above this note: what it links to
+  // Links to: what this note links to
   const outs = cur ? state.links.get(cur) || [] : [];
-  if (!outs.length) none(ol, cur ? 'Nothing — link to a note to put this one under it' : '—');
+  if (!outs.length) none(ol, cur ? 'No links yet' : '—');
   for (const l of outs) {
     const li = document.createElement('li');
     li.textContent = l.resolved ? nameOf(l.resolved) : l.target;
