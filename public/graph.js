@@ -246,6 +246,13 @@ const Graph = (() => {
   // look messy. We try many starting arrangements, let each settle, score it, and keep the cleanest one.
   const turn = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
   const segmentsCross = (p, q, r, s) => turn(p, q, r) * turn(p, q, s) < 0 && turn(r, s, p) * turn(r, s, q) < 0;
+  // Does segment p–q pass through box b?
+  function segmentHitsBox(p, q, b) {
+    const inside = (pt) => pt.x > b.x0 && pt.x < b.x1 && pt.y > b.y0 && pt.y < b.y1;
+    if (inside(p) || inside(q)) return true;
+    const c = [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
+    return [0, 1, 2, 3].some((i) => segmentsCross(p, q, c[i], c[(i + 1) % 4]));
+  }
   function countCrossings() {
     let k = 0;
     for (let i = 0; i < edges.length; i++) {
@@ -267,8 +274,15 @@ const Graph = (() => {
         if (m === p || m === q) continue;
         const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
         if (t <= 0 || t >= 1) continue;
-        // the note plus its label (drawn below it)
+        // the note itself
         if (Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 10) lineThroughNote++;
+      }
+      // …and its label, drawn below it
+      for (const m of nodes) {
+        if (m === p || m === q) continue;
+        const half = m.labelW / 2 + 4;
+        const top = m.y + radius(m) + 2;
+        if (segmentHitsBox(p, q, { x0: m.x - half, x1: m.x + half, y0: top, y1: top + 15 })) lineThroughNote++;
       }
     }
     let labelsOverlap = 0;
@@ -304,6 +318,126 @@ const Graph = (() => {
     for (const [n, x, y] of best) Object.assign(n, { x, y, vx: 0, vy: 0 });
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     alpha = 0; // settled and clean: stay still
+    repair(); // whatever couldn't be avoided, fix note by note
+  }
+
+  // ---------- repairing a layout ----------
+  // When lines cross (or run through notes, or labels overlap), move the notes involved — not held or pinned
+  // ones — to another spot around the note they're linked to, e.g. swing a note's children round to its other
+  // side. Each move is kept only if it makes things cleaner; repeat until nothing overlaps.
+  let repairPending = false;
+
+  function troubleNotes() {
+    const out = new Set();
+    for (let i = 0; i < edges.length; i++) {
+      for (let j = i + 1; j < edges.length; j++) {
+        const [p, q] = edges[i];
+        const [r, s] = edges[j];
+        if (p !== r && p !== s && q !== r && q !== s && segmentsCross(p, q, r, s)) [p, q, r, s].forEach((n) => out.add(n));
+      }
+    }
+    for (const [p, q] of edges) {
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const len2 = dx * dx + dy * dy || 1;
+      for (const m of nodes) {
+        if (m === p || m === q) continue;
+        const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
+        if (t > 0 && t < 1 && Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 10) [m, p, q].forEach((n) => out.add(n));
+      }
+    }
+    // Small notes first: they're the cheapest to move
+    return [...out].filter((n) => !n.pinned && !held.has(n.id)).sort((a, b) => a.deg - b.deg || a.size - b.size);
+  }
+
+  // Messiness plus a cost for lines much longer than usual, so a fix never flings a note far away
+  function repairScore() {
+    let stretch = 0;
+    for (const [p, q] of edges) stretch += Math.max(0, Math.hypot(q.x - p.x, q.y - p.y) - settings.dist * 2.5);
+    return messiness() + stretch * 2;
+  }
+
+  function repair(budgetMs = 300) {
+    const until = performance.now() + budgetMs;
+    const start = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    const free = (n) => !n.pinned && !held.has(n.id);
+    let score = repairScore();
+    const clean = () => countCrossings() === 0 && messiness() === 0;
+    // End notes first; only if that isn't enough, notes with more links
+    for (const maxLinks of [1, 2, 3, Infinity]) {
+      let improved = true;
+      while (!clean() && improved && performance.now() < until) {
+        improved = false;
+        for (const n of troubleNotes().filter((t) => t.deg <= maxLinks)) {
+          // Its end notes (linked only to it) move along with it, keeping the branch together
+          const tagAlong = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && m.deg === 1 && free(m));
+          const anchors = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && !tagAlong.includes(m));
+          if (!anchors.length) continue;
+          const ox = n.x;
+          const oy = n.y;
+          const moveTo = (x, y) => {
+            const dx = x - n.x;
+            const dy = y - n.y;
+            n.x = x;
+            n.y = y;
+            for (const m of tagAlong) { m.x += dx; m.y += dy; }
+          };
+          let bestPos = null;
+          let best = score;
+          // Try spots around each note it links to: many angles, at its current distance and a bit further out
+          for (const anchor of anchors) {
+            const r0 = Math.max(settings.dist, Math.hypot(ox - anchor.x, oy - anchor.y));
+            for (const r of [settings.dist, settings.dist * 1.6, r0, r0 * 1.4]) {
+              for (let k = 0; k < 16; k++) {
+                const a = (k / 16) * Math.PI * 2;
+                moveTo(anchor.x + r * Math.cos(a), anchor.y + r * Math.sin(a));
+                // prefer small moves when two spots are equally clean
+                const s = repairScore() + Math.hypot(n.x - ox, n.y - oy) * 0.01;
+                if (s < best - 0.5) {
+                  best = s;
+                  bestPos = [n.x, n.y];
+                }
+              }
+            }
+          }
+          moveTo(ox, oy);
+          if (bestPos) {
+            moveTo(...bestPos);
+            score = repairScore();
+            improved = true;
+          }
+          if (clean() || performance.now() > until) break;
+        }
+      }
+      if (clean()) break;
+    }
+    // Glide moved notes from where they were to their new spots
+    for (const n of nodes) {
+      const [sx, sy] = start.get(n.id);
+      if (Math.hypot(n.x - sx, n.y - sy) > 0.5) {
+        n.goal = [n.x, n.y];
+        n.x = sx;
+        n.y = sy;
+      }
+    }
+  }
+
+  // Move notes a step towards their repaired spots; returns true while any are still on the way
+  function glide() {
+    let busy = false;
+    for (const n of nodes) {
+      if (!n.goal) continue;
+      const [gx, gy] = n.goal;
+      n.x += (gx - n.x) * 0.2;
+      n.y += (gy - n.y) * 0.2;
+      if (Math.hypot(gx - n.x, gy - n.y) < 0.5) {
+        n.x = gx;
+        n.y = gy;
+        n.goal = null;
+      } else busy = true;
+      positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+    }
+    return busy;
   }
   // ---------- drawing ----------
   // Smallest notes are 6px; the one with the most below it grows by up to 26px times the "Node size" slider
@@ -525,6 +659,12 @@ const Graph = (() => {
   function loop() {
     if (!visible) return;
     if (alpha > 0.003) tick();
+    else if (repairPending && !drag) {
+      // the graph has settled after a change: fix anything that now crosses or overlaps
+      repairPending = false;
+      repair();
+    }
+    glide();
     if (fitPending && alpha < 0.3) { fit(); fitPending = false; }
     draw();
     raf = requestAnimationFrame(loop);
@@ -566,7 +706,10 @@ const Graph = (() => {
       const n = hit(p);
       downAt = { sx: p.sx, sy: p.sy };
       drag = n ? { node: n } : { pan: true, sx: p.sx, sy: p.sy, cx: cam.x, cy: cam.y };
-      if (n) alpha = Math.max(alpha, 0.3);
+      if (n) {
+        alpha = Math.max(alpha, 0.3);
+        for (const m of nodes) m.goal = null; // a new drag takes over from any repair still gliding
+      }
     });
     window.addEventListener('pointermove', (e) => {
       if (!visible) return;
@@ -591,6 +734,7 @@ const Graph = (() => {
       if (drag.node && clicked) opts.onOpen(drag.node);
       else if (drag.node?.pinned) setPin(drag.node, true); // moved a pinned note: pin it at its new spot
       else if (drag.node) held.add(drag.node.id); // let go: it stays where you dropped it (this session, no pin)
+      if (drag.node && !clicked) repairPending = true; // once things settle, move other notes so nothing crosses
       drag = null;
       downAt = null;
     });
@@ -718,6 +862,10 @@ const Graph = (() => {
     // Light up one group (hovering it in the legend); null for none
     highlightGroup(id) {
       litGroup = id;
+    },
+    // Fix crossing lines and overlaps now (also runs on its own after you drop a note)
+    tidy() {
+      repair();
     },
     // Current layout, read-only: notes with positions, and lines as pairs of note ids
     layout() {
