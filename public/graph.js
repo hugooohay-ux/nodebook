@@ -21,6 +21,7 @@ const Graph = (() => {
   let edges = [];
   let byId = new Map();
   const positions = new Map(); // survives rebuilds so the layout doesn't jump
+  const pins = new Map(); // notes placed by hand: id -> { x, y }, saved with the vault
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
   let visible = false;
@@ -81,8 +82,11 @@ const Graph = (() => {
     nodes = keep;
 
     for (const n of nodes) {
+      const pin = pins.get(n.id);
       const p = positions.get(n.id);
-      if (p) Object.assign(n, p);
+      n.pinned = !!pin;
+      if (pin) Object.assign(n, { x: pin.x, y: pin.y, vx: 0, vy: 0 });
+      else if (p) Object.assign(n, p);
       else {
         // Spawn next to an already placed neighbour when possible
         const nb = [...n.nbrs].map((id) => positions.get(id)).find(Boolean);
@@ -156,10 +160,34 @@ const Graph = (() => {
       p.vx += dx * f; p.vy += dy * f;
       q.vx -= dx * f; q.vy -= dy * f;
     }
+    // Keep notes off lines that aren't theirs: push the note sideways, and the line a little the other way
+    if (nodes.length * edges.length < 300000) {
+      for (const [p, q] of edges) {
+        const dx = q.x - p.x;
+        const dy = q.y - p.y;
+        const len2 = dx * dx + dy * dy || 1;
+        for (const m of nodes) {
+          if (m === p || m === q) continue;
+          const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
+          if (t <= 0 || t >= 1) continue;
+          let ox = m.x - (p.x + t * dx);
+          let oy = m.y - (p.y + t * dy);
+          let d = Math.hypot(ox, oy);
+          const clear = radius(m) + 18; // room for the note and its label
+          if (d >= clear) continue;
+          if (d < 0.01) { ox = -dy; oy = dx; d = Math.hypot(ox, oy) || 1; }
+          const push = ((clear - d) / d) * 0.25 * Math.max(a, 0.05);
+          m.vx += ox * push; m.vy += oy * push;
+          p.vx -= ox * push * 0.3; p.vy -= oy * push * 0.3;
+          q.vx -= ox * push * 0.3; q.vy -= oy * push * 0.3;
+        }
+      }
+    }
     for (const p of nodes) {
       p.vx -= p.x * 0.004 * a;
       p.vy -= p.y * 0.004 * a;
-      if (drag && drag.node === p) { p.vx = p.vy = 0; continue; }
+      // Dragged and placed notes stay where they are; everything else flows around them
+      if ((drag && drag.node === p) || p.pinned) { p.vx = p.vy = 0; continue; }
       p.vx *= 0.6;
       p.vy *= 0.6;
       const v = Math.hypot(p.vx, p.vy);
@@ -241,26 +269,41 @@ const Graph = (() => {
     const vis = (n) => (1 - fade * 0.82 * (1 - Math.max(n.hot, n.nb))) * (match(n) ? 1 : 0.2);
     const t = reducedMotion.matches ? 0 : now / 1000;
 
+    // Lines run from the edge of one note to the edge of the other, never into the middle
+    const shown = (n) => radius(n) * (1 + (n.hot || 0) * 0.45 + (n.nb || 0) * 0.15);
+    const segment = (a, b) => {
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const ra = shown(a) + 2 / cam.k;
+      const rb = shown(b) + 2 / cam.k;
+      if (len <= ra + rb) return null; // the notes touch: nothing to draw
+      const ux = (b.x - a.x) / len;
+      const uy = (b.y - a.y) / len;
+      return [a.x + ux * ra, a.y + uy * ra, b.x - ux * rb, b.y - uy * rb];
+    };
+
     // Edges: base line, then an accent overlay with an arrowhead on the edges of the chain
     for (const e of edges) {
       const [p, r] = e;
       const on = e.hot;
+      const seg = segment(p, r);
+      if (!seg) continue;
       ctx.globalAlpha = Math.min(vis(p), vis(r)) * (1 - on);
       ctx.strokeStyle = COLORS.edge;
       ctx.lineWidth = 1 / cam.k;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(r.x, r.y);
+      ctx.moveTo(seg[0], seg[1]);
+      ctx.lineTo(seg[2], seg[3]);
       ctx.stroke();
       if (on < 0.01 || !e.to) continue;
       const a = e.from;
       const b = e.to;
+      const hs = segment(a, b);
       ctx.globalAlpha = on * 0.9;
       ctx.strokeStyle = ctx.fillStyle = COLORS.edgeHi;
       ctx.lineWidth = (1 + on * 1.2) / cam.k;
       ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+      ctx.moveTo(hs[0], hs[1]);
+      ctx.lineTo(hs[2], hs[3]);
       ctx.stroke();
       // Arrowhead just outside the lower note
       const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
@@ -307,6 +350,20 @@ const Graph = (() => {
         ctx.globalAlpha = tint;
         ctx.fillStyle = COLORS.accent;
         ctx.fill();
+      }
+
+      // Small dot on notes you've placed by hand
+      if (n.pinned) {
+        const px = n.x + r * 0.75;
+        const py = n.y - r * 0.75;
+        ctx.globalAlpha = v;
+        ctx.fillStyle = COLORS.label;
+        ctx.strokeStyle = COLORS.bg;
+        ctx.lineWidth = 1.5 / cam.k;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.6 / cam.k, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
 
       if (n.id === current) {
@@ -415,10 +472,18 @@ const Graph = (() => {
       const p = toWorld(e);
       const clicked = downAt && Math.hypot(p.sx - downAt.sx, p.sy - downAt.sy) < 4;
       if (drag.node && clicked) opts.onOpen(drag.node);
+      else if (drag.node) setPin(drag.node, true); // dropped somewhere new: it stays there
       drag = null;
       downAt = null;
     });
     canvas.addEventListener('pointerleave', () => { if (!drag) hover = null; });
+    // Right-click a note: open it, or let a placed note float again
+    canvas.addEventListener('contextmenu', (e) => {
+      const n = hit(toWorld(e));
+      if (!n) return;
+      e.preventDefault();
+      showNodeMenu(n, e.clientX, e.clientY);
+    });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const p = toWorld(e);
@@ -438,11 +503,56 @@ const Graph = (() => {
     on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
     on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
     on('g-fit', 'click', fit);
+    on('g-unpin', 'click', () => {
+      pins.clear();
+      for (const n of nodes) n.pinned = false;
+      savePins();
+      alpha = Math.max(alpha, 0.6);
+    });
   }
+
+  // ---------- placing notes by hand ----------
+  function savePins() {
+    opts.onPinsChange?.(Object.fromEntries(pins));
+    updateStats();
+  }
+
+  function setPin(n, pinned) {
+    n.pinned = pinned;
+    if (pinned) pins.set(n.id, { x: Math.round(n.x), y: Math.round(n.y) });
+    else pins.delete(n.id);
+    alpha = Math.max(alpha, 0.35); // let the other notes settle around it
+    savePins();
+  }
+
+  let nodeMenu = null;
+  function showNodeMenu(n, x, y) {
+    nodeMenu?.remove();
+    nodeMenu = document.createElement('ul');
+    nodeMenu.className = 'menu';
+    nodeMenu.innerHTML = `<li data-act="open">Open note</li><li data-act="pin">${n.pinned ? 'Let it float again' : 'Keep it here'}</li>`;
+    document.body.appendChild(nodeMenu);
+    nodeMenu.style.left = Math.min(x, innerWidth - nodeMenu.offsetWidth - 8) + 'px';
+    nodeMenu.style.top = Math.min(y, innerHeight - nodeMenu.offsetHeight - 8) + 'px';
+    nodeMenu.addEventListener('click', (e) => {
+      const act = e.target.closest('li')?.dataset.act;
+      nodeMenu.remove();
+      nodeMenu = null;
+      if (act === 'open') opts.onOpen(n);
+      else if (act === 'pin') setPin(n, !n.pinned);
+    });
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (nodeMenu && !e.target.closest('.menu')) {
+      nodeMenu.remove();
+      nodeMenu = null;
+    }
+  });
 
   function updateStats() {
     const el = document.getElementById('graph-stats');
-    el.textContent = `${nodes.filter((n) => !n.unresolved).length} notes · ${edges.length} links · drag to move, scroll to zoom, click to open`;
+    const placed = nodes.filter((n) => n.pinned).length;
+    el.textContent = `${nodes.filter((n) => !n.unresolved).length} notes · ${edges.length} links${placed ? ` · ${placed} placed` : ''} · drag a note to place it, right-click to let it float, scroll to zoom, click to open`;
   }
 
   return {
@@ -453,9 +563,15 @@ const Graph = (() => {
       bind();
     },
     show() {
+      const fresh = !positions.size;
       rebuild();
       updateStats();
-      if (!positions.size || settings.local) fitPending = true;
+      if (fresh || settings.local) {
+        // Work out the layout up front (within ~150 ms) so the graph opens settled instead of wriggling into place
+        const until = performance.now() + 150;
+        while (alpha > 0.01 && performance.now() < until) tick();
+        fitPending = true;
+      }
       if (visible) return;
       visible = true;
       cancelAnimationFrame(raf);
@@ -471,6 +587,13 @@ const Graph = (() => {
       rebuild();
       updateStats();
     },
+    // Current layout, read-only: notes with positions, and lines as pairs of note ids
+    layout() {
+      return {
+        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), pinned: !!n.pinned })),
+        edges: edges.map(([p, q]) => [p.id, q.id]),
+      };
+    },
     // Label of the note under a point on screen, if any
     noteAt(clientX, clientY) {
       return hit(toWorld({ clientX, clientY }))?.label || null;
@@ -481,11 +604,21 @@ const Graph = (() => {
       if (!n) return [];
       return [...chainFrom(n).all].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
     },
-    // Forget the layout when switching vaults
-    reset() {
+    // Forget the layout when switching vaults; `placed` is the new vault's hand-placed notes
+    reset(placed = {}) {
       positions.clear();
+      pins.clear();
+      for (const [id, p] of Object.entries(placed)) pins.set(id, p);
       hover = null;
       fitPending = true;
+    },
+    // Keep a placed note's spot when it's renamed or deleted
+    movePin(from, to) {
+      const p = pins.get(from);
+      if (!p) return;
+      pins.delete(from);
+      if (to) pins.set(to, p);
+      savePins();
     },
   };
 })();

@@ -157,7 +157,7 @@ const noteHash = (path) => `${vaultHash()}/n/${encodeURIComponent(path)}`;
 
 async function enterVault(info) {
   Home.hide();
-  Graph.reset();
+  Graph.reset(await api.getPins(info.id));
   state.vault = info;
   state.current = null;
   setVaultName(info.name);
@@ -429,6 +429,7 @@ async function renameNote(path, newName) {
   state.notes.delete(path);
   state.notes.set(newPath, { ...note, path: newPath, name: newName });
   if (state.current === path) state.current = newPath;
+  Graph.movePin(path, newPath);
 
   const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#])`, 'gi');
   for (const n of state.notes.values()) {
@@ -467,6 +468,7 @@ async function deleteNote(path) {
   }
   await api.trashNote(path);
   state.notes.delete(path);
+  Graph.movePin(path, null);
   rebuildIndex();
   renderFileList();
   return true;
@@ -898,6 +900,7 @@ api.onVaultChanged(async (vaultId) => {
 Graph.init($('#graph'), {
   getData: () => ({ notes: state.notes, links: state.links, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
+  onPinsChange: (pins) => api.savePins(pins),
 });
 
 // Routes: #/ (all vaults), #/v/<vault> (its documents), #/v/<vault>/graph, #/v/<vault>/n/<note path>

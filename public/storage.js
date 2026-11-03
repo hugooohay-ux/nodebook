@@ -147,6 +147,17 @@ See also: [[Welcome]], [[Linking notes]].
 
     closeVault: () => { current = null; },
 
+    // Notes placed by hand in the graph: { notePath: { x, y } }, kept with the vault
+    async getPins(id = current) {
+      return tx('readonly', async (s) => (await req(s.vaults.get(id)))?.pins || {});
+    },
+    async savePins(pins, id = current) {
+      await tx('readwrite', async (s) => {
+        const v = await req(s.vaults.get(id));
+        if (v) s.vaults.put({ ...v, pins });
+      });
+    },
+
     async renameVault(id, name) {
       await tx('readwrite', async (s) => {
         const v = await req(s.vaults.get(id));
