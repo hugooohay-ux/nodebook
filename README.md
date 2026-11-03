@@ -23,6 +23,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - `[[Note]]`, `[[Note|alias]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
+- "Part of" parents, set from a bar above each note. Stored as `up:` properties (the format Obsidian's
+  Breadcrumbs plugin reads), hidden in the editor. The parent lists the note under Sub-notes.
+- Hovering a note in the graph lights up the chain below it (following links and Part-of, never upward),
+  one step at a time with arrows
 - Renaming a note updates links to it across the vault
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter

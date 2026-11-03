@@ -204,6 +204,13 @@
 
     <main id="main">
       <section id="note-view">
+        <div id="partof" class="empty">
+          <span class="po-label" title="The broader notes this one belongs under. Hovering a note in the graph lights up everything below it.">↑ Part of</span>
+          <span id="po-chips"></span>
+          <button id="po-add" title="Put this note under another note">+ Add</button>
+          <input id="po-input" list="po-list" placeholder="Note name…" autocomplete="off" hidden>
+          <datalist id="po-list"></datalist>
+        </div>
         <div id="content">
           <div id="editor"></div>
           <div id="preview"><article class="page markdown"></article></div>
@@ -212,6 +219,8 @@
     </main>
 
     <aside id="rightbar">
+      <h3>Sub-notes <span id="sub-count"></span></h3>
+      <ul id="subnotes"></ul>
       <h3>Backlinks <span id="bl-count"></span></h3>
       <ul id="backlinks"></ul>
       <h3>Outgoing links</h3>

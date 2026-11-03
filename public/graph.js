@@ -11,6 +11,10 @@ const Graph = (() => {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let lastFrame = 0;
   let fade = 0; // 0..1, how strongly the rest of the graph is dimmed around the focused node
+  let chain = null; // Map id -> steps below the hovered node
+  let chainFor; // the node `chain` was computed for
+  let chainSince = 0; // when hovering started, for the trickle
+  const STEP_MS = 110; // delay between each step of the chain lighting up
 
   let canvas, ctx, opts;
   let nodes = [];
@@ -30,20 +34,26 @@ const Graph = (() => {
 
   // ---------- data ----------
   function rebuild() {
-    const { notes, links, current } = opts.getData();
+    const { notes, links, ups, current } = opts.getData();
     const map = new Map();
-    for (const n of notes.values()) map.set(n.path, { id: n.path, label: n.name, unresolved: false, deg: 0, nbrs: new Set() });
+    const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set() });
+    for (const n of notes.values()) map.set(n.path, node(n.path, n.name, false));
 
     const es = [];
     const seen = new Set();
     for (const [src, outs] of links) {
+      const parents = ups?.get(src);
       for (const l of outs) {
         let id = l.resolved;
         if (!id) {
           if (!settings.unresolved) continue;
           id = '?' + l.target.toLowerCase();
-          if (!map.has(id)) map.set(id, { id, label: l.target, unresolved: true, deg: 0, nbrs: new Set() });
+          if (!map.has(id)) map.set(id, node(id, l.target, true));
         }
+        // "Down" is the direction a chain flows: a normal link points down to its target,
+        // but a "Part of" link points up, so it counts as the parent pointing down to this note
+        if (parents?.has(id)) map.get(id).down.add(src);
+        else map.get(src).down.add(id);
         const key = src < id ? src + '\n' + id : id + '\n' + src;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -87,7 +97,28 @@ const Graph = (() => {
       }
     }
     if (hover && !byId.has(hover.id)) hover = null;
+    chainFor = undefined; // recompute the hover chain against the new nodes
     alpha = Math.max(alpha, 0.5);
+  }
+
+  // Everything reachable going *down* from a note, with how many steps away it is
+  function chainFrom(start) {
+    const depth = new Map([[start.id, 0]]);
+    let frontier = [start];
+    while (frontier.length) {
+      const next = [];
+      for (const n of frontier) {
+        for (const id of n.down) {
+          const m = byId.get(id);
+          if (m && !depth.has(id)) {
+            depth.set(id, depth.get(n.id) + 1);
+            next.push(m);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return depth;
   }
 
   // ---------- simulation ----------
@@ -164,17 +195,44 @@ const Graph = (() => {
     lastFrame = now;
     const ease = reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 90);
     fade += ((focus ? 1 : 0) - fade) * ease;
-    for (const n of nodes) {
-      n.hot = (n.hot || 0) + ((n === focus ? 1 : 0) - (n.hot || 0)) * ease;
-      n.nb = (n.nb || 0) + ((focus && focus.nbrs.has(n.id) ? 1 : 0) - (n.nb || 0)) * ease;
+
+    // Hovering lights up the chain below the node, one step at a time, never the notes above it
+    if (focus !== chainFor) {
+      chainFor = focus;
+      chain = focus ? chainFrom(focus) : null;
+      chainSince = now;
+      for (const e of edges) {
+        // A highlighted edge points down the chain; links pointing back up it stay dark
+        const [p, r] = e;
+        e.from = e.to = null;
+        if (!chain) continue;
+        const dp = chain.get(p.id);
+        const dr = chain.get(r.id);
+        if (dp === undefined || dr === undefined) continue;
+        if (p.down.has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
+        else if (r.down.has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
+      }
     }
-    // How visible a node is: dimmed when something else is focused, unless it's a neighbour
+    const step = reducedMotion.matches ? 0 : STEP_MS;
+    const lit = (depth) => now - chainSince >= (depth - 1) * step; // has this step of the trickle arrived yet?
+    const strength = (depth) => Math.max(0.45, 1 - 0.14 * (depth - 1)); // fainter the further down
+    for (const n of nodes) {
+      const d = chain?.get(n.id);
+      n.hot = (n.hot || 0) + ((n === focus ? 1 : 0) - (n.hot || 0)) * ease;
+      n.nb = (n.nb || 0) + ((d > 0 && lit(d) ? strength(d) : 0) - (n.nb || 0)) * ease;
+    }
+    for (const e of edges) {
+      const d = e.to ? chain.get(e.to.id) : 0;
+      e.hot = (e.hot || 0) + ((e.to && lit(d) ? strength(d) : 0) - (e.hot || 0)) * ease;
+    }
+    // How visible a node is: dimmed when something else is focused, unless it's in the chain
     const vis = (n) => (1 - fade * 0.82 * (1 - Math.max(n.hot, n.nb))) * (match(n) ? 1 : 0.2);
     const t = reducedMotion.matches ? 0 : now / 1000;
 
-    // Edges: base line, then a static accent overlay on edges touching the focused node
-    for (const [p, r] of edges) {
-      const on = Math.max(p.hot, r.hot);
+    // Edges: base line, then an accent overlay with an arrowhead on the edges of the chain
+    for (const e of edges) {
+      const [p, r] = e;
+      const on = e.hot;
       ctx.globalAlpha = Math.min(vis(p), vis(r)) * (1 - on);
       ctx.strokeStyle = COLORS.edge;
       ctx.lineWidth = 1 / cam.k;
@@ -182,14 +240,30 @@ const Graph = (() => {
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(r.x, r.y);
       ctx.stroke();
-      if (on < 0.01) continue;
+      if (on < 0.01 || !e.to) continue;
+      const a = e.from;
+      const b = e.to;
       ctx.globalAlpha = on * 0.9;
-      ctx.strokeStyle = COLORS.edgeHi;
+      ctx.strokeStyle = ctx.fillStyle = COLORS.edgeHi;
       ctx.lineWidth = (1 + on * 1.2) / cam.k;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(r.x, r.y);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      // Arrowhead just outside the lower note
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const ux = (b.x - a.x) / len;
+      const uy = (b.y - a.y) / len;
+      const tipBack = radius(b) * (1 + (b.nb || 0) * 0.15) + 3 / cam.k;
+      const tx = b.x - ux * tipBack;
+      const ty = b.y - uy * tipBack;
+      const s = 7 / cam.k;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - ux * s - uy * s * 0.55, ty - uy * s + ux * s * 0.55);
+      ctx.lineTo(tx - ux * s + uy * s * 0.55, ty - uy * s - ux * s * 0.55);
+      ctx.closePath();
+      ctx.fill();
     }
 
     for (const n of nodes) {
@@ -384,6 +458,16 @@ const Graph = (() => {
     rebuild() {
       rebuild();
       updateStats();
+    },
+    // Label of the note under a point on screen, if any
+    noteAt(clientX, clientY) {
+      return hit(toWorld({ clientX, clientY }))?.label || null;
+    },
+    // Labels of the notes that light up when hovering `id`, in chain order
+    chainOf(id) {
+      const n = byId.get(id);
+      if (!n) return [];
+      return [...chainFrom(n)].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
     },
     // Forget the layout when switching vaults
     reset() {

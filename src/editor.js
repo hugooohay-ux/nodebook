@@ -1,6 +1,6 @@
 // Markdown editor with live-rendered [[wiki links]], built on CodeMirror 6.
 // Bundled to public/vendor/editor.js by `npm run build`; exposes window.NoteEditor.
-import { Annotation, EditorSelection, EditorState, Prec, RangeSetBuilder, StateEffect } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState, Prec, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -50,15 +50,49 @@ class LinkWidget extends WidgetType {
   }
 }
 
+// ---------- "Part of" properties: managed by the app's Part-of bar, hidden in the editor ----------
+const FRONT_RE = /^---\n([\s\S]*?)\n---(?=\n|$)/;
+
+// End of a properties block holding only `up:` (other imported properties stay visible and editable)
+function hiddenEnd(text) {
+  const m = FRONT_RE.exec(text);
+  if (!m) return 0;
+  const onlyUp = m[1].split('\n').every((l) => /^up:/.test(l) || /^\s+-\s/.test(l) || !l.trim());
+  return onlyUp ? m[0].length : 0;
+}
+
+const hidePropsField = StateField.define({
+  create: (state) => propsDeco(state),
+  update: (deco, tr) => (tr.docChanged ? propsDeco(tr.state) : deco),
+  provide: (f) => [EditorView.decorations.from(f), EditorView.atomicRanges.of((v) => v.state.field(f))],
+});
+function propsDeco(state) {
+  const end = hiddenEnd(state.sliceDoc(0, 4000));
+  return end ? Decoration.set([Decoration.replace({ block: true }).range(0, end)]) : Decoration.none;
+}
+// Never let the cursor land inside (or before) the hidden block
+const firstEditable = (doc) => {
+  const end = hiddenEnd(doc.sliceString(0, 4000));
+  return end ? Math.min(end + 1, doc.length) : 0;
+};
+const keepCursorBelowProps = EditorState.transactionFilter.of((tr) => {
+  if (!tr.selection || tr.docChanged) return tr;
+  const min = firstEditable(tr.newDoc);
+  const sel = tr.newSelection;
+  if (!min || sel.ranges.every((r) => r.from >= min)) return tr;
+  return [tr, { selection: EditorSelection.create(sel.ranges.map((r) => EditorSelection.range(Math.max(r.anchor, min), Math.max(r.head, min))), sel.mainIndex), sequential: true }];
+});
+
 function linkDecorations(view, opts) {
   const text = view.state.doc.toString();
   const code = [...text.matchAll(CODE_RE)].map((m) => [m.index, m.index + m[0].length]);
+  const props = hiddenEnd(text);
   const ranges = view.state.selection.ranges;
   const builder = new RangeSetBuilder();
   for (const m of text.matchAll(LINK_RE)) {
     const from = m.index;
     const to = from + m[0].length;
-    if (code.some(([a, b]) => from >= a && from < b)) continue;
+    if (from < props || code.some(([a, b]) => from >= a && from < b)) continue;
     const { target, label } = parseLink(m[1]);
     if (!target) continue;
     // Show the raw [[...]] only while the cursor is in or touching it
@@ -105,13 +139,16 @@ function activeLines(view) {
 function markDecorations(view) {
   const { state } = view;
   const active = activeLines(view);
+  const props = hiddenEnd(state.sliceDoc(0, 4000));
   const decos = [];
-  for (const { from, to } of view.visibleRanges) {
+  for (const { from: vFrom, to } of view.visibleRanges) {
+    const from = Math.max(vFrom, props);
+    if (from >= to) continue;
     syntaxTree(state).iterate({
       from,
       to,
       enter: (node) => {
-        if (!HIDDEN_MARKS.has(node.name)) return;
+        if (!HIDDEN_MARKS.has(node.name) || node.from < props) return;
         if (node.name === 'CodeMark' && node.node.parent?.name !== 'InlineCode') return; // keep ``` fences
         if (active.has(state.doc.lineAt(node.from).number)) return;
         let end = node.to;
@@ -372,6 +409,8 @@ window.NoteEditor = {
       autocompletion({ override: [linkCompletions(opts)], icons: false }),
       livePreview(opts),
       hideMarks,
+      hidePropsField,
+      keepCursorBelowProps,
       theme,
       Prec.highest(
         keymap.of([
@@ -410,9 +449,15 @@ window.NoteEditor = {
       },
       // Show a different note: fresh undo history, cursor at the top
       load(doc) {
-        view.setState(EditorState.create({ doc, extensions }));
+        let state = EditorState.create({ doc, extensions });
+        state = state.update({ selection: { anchor: firstEditable(state.doc) } }).state;
+        view.setState(state);
         view.scrollDOM.scrollTop = 0;
         opts.onFormat?.(formatState(view.state));
+      },
+      // An edit made through the app's UI (e.g. the Part-of bar): undoable and saved like typing
+      replaceRange(from, to, insert) {
+        view.dispatch({ changes: { from, to, insert }, userEvent: 'input.props' });
       },
       // Run a toolbar command: bold, italic, heading (with level), bullet, link, undo, …
       exec(cmd, arg) {

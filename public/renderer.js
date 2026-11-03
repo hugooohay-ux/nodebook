@@ -6,6 +6,7 @@ const state = {
   vault: null,
   notes: new Map(), // path -> { path, name, content, mtime }
   links: new Map(), // path -> [{ target, resolved }]
+  ups: new Map(), // path -> Set of parent paths ("Part of")
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
   mode: 'edit',
@@ -52,6 +53,52 @@ function parseLink(inner) {
   return { target: raw.split('#')[0].trim(), alias: bar < 0 ? null : inner.slice(bar + 1).trim(), raw: raw.trim() };
 }
 
+// ---------- "Part of" (parents) ----------
+// Stored at the top of the note as Obsidian-style properties, which is also what the Breadcrumbs plugin reads:
+// ---
+// up:
+//   - "[[Handelsbolag]]"
+// ---
+const FRONT_RE = /^---\n([\s\S]*?)\n---(?=\n|$)/;
+const stripFront = (content) => content.replace(FRONT_RE, '').replace(/^\n/, '');
+
+function parseUps(content) {
+  const out = [];
+  const m = FRONT_RE.exec(content);
+  if (m) {
+    const lines = m[1].split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const key = /^up:\s*(.*)$/.exec(lines[i]);
+      if (!key) continue;
+      const values = key[1] ? [key[1]] : [];
+      while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) values.push(lines[++i]);
+      for (const v of values) for (const l of v.matchAll(LINK_RE)) out.push(parseLink(l[1]).target);
+    }
+  }
+  // Also accept Dataview-style `up:: [[Parent]]` lines
+  for (const line of content.matchAll(/^up::\s*(.+)$/gm)) for (const l of line[1].matchAll(LINK_RE)) out.push(parseLink(l[1]).target);
+  return [...new Set(out.filter(Boolean))];
+}
+
+// The edit that sets a note's parents to `names` (other properties are kept)
+function upsEdit(content, names) {
+  const m = FRONT_RE.exec(content);
+  const rest = [];
+  if (m) {
+    const lines = m[1].split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (/^up:/.test(lines[i])) {
+        while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) i++;
+        continue;
+      }
+      if (lines[i].trim()) rest.push(lines[i]);
+    }
+  }
+  const body = [...(names.length ? ['up:', ...names.map((n) => `  - "[[${n}]]"`)] : []), ...rest];
+  const to = m ? m[0].length + (content[m[0].length] === '\n' ? 1 : 0) : 0;
+  return { from: 0, to, insert: body.length ? `---\n${body.join('\n')}\n---\n` : '' };
+}
+
 function resolve(target) {
   if (!target) return null;
   return state.byName.get(target.toLowerCase().replace(/\.md$/i, '')) || null;
@@ -80,6 +127,17 @@ function rebuildIndex() {
       out.push({ target, resolved });
     }
     state.links.set(n.path, out);
+  }
+
+  // Parents of each note ("Part of"), as resolved paths
+  state.ups.clear();
+  for (const n of state.notes.values()) {
+    const parents = new Set();
+    for (const t of parseUps(n.content)) {
+      const p = resolve(t);
+      if (p && p !== n.path) parents.add(p);
+    }
+    state.ups.set(n.path, parents);
   }
 }
 
@@ -168,9 +226,92 @@ async function showNote(path) {
   $('#title').value = note.name;
   editor.load(note.content);
   setMode(state.mode);
+  renderPartOf();
   renderSidePanel();
   highlightActive();
 }
+
+// ---------- Part-of bar ----------
+function renderPartOf() {
+  const note = state.notes.get(state.current);
+  if (!note) return;
+  const ups = parseUps(note.content);
+  $('#po-chips').innerHTML = ups
+    .map((n) => `<span class="po-chip${resolve(n) ? '' : ' unresolved'}"><a href="#" data-open="${escapeHtml(n)}" title="Open “${escapeHtml(n)}”">${escapeHtml(n)}</a><button data-remove="${escapeHtml(n)}" title="Remove from Part of">×</button></span>`)
+    .join('');
+  $('#partof').classList.toggle('empty', !ups.length);
+}
+
+async function setParents(names) {
+  const note = state.notes.get(state.current);
+  if (!note) return;
+  const { from, to, insert } = upsEdit(note.content, names);
+  editor.replaceRange(from, to, insert); // saved and undoable like typing
+  await flushSave();
+  renderPartOf();
+  if (state.mode === 'preview') renderPreview();
+}
+
+async function addParent(raw) {
+  const name = raw.replace(/[[\]|#\\:*?"<>]/g, '').trim();
+  const note = state.notes.get(state.current);
+  if (!name || !note) return;
+  const existing = resolve(name);
+  if (existing === note.path) return toast('A note can’t be part of itself');
+  const canonical = existing ? nameOf(existing) : name;
+  const ups = parseUps(note.content);
+  if (ups.some((u) => u.toLowerCase() === canonical.toLowerCase())) return;
+  if (!existing) await createNoteNamed(canonical);
+  await setParents([...ups, canonical]);
+  toast(existing ? `Now part of “${canonical}”` : `Created “${canonical}” and put this note under it`);
+}
+
+function closeParentInput() {
+  $('#po-input').hidden = true;
+  $('#po-input').value = '';
+  $('#po-add').hidden = false;
+}
+
+$('#po-add').addEventListener('click', () => {
+  const note = state.notes.get(state.current);
+  const taken = new Set(parseUps(note.content).map((n) => n.toLowerCase()));
+  $('#po-list').innerHTML = [...state.notes.values()]
+    .filter((n) => n.path !== note.path && !taken.has(n.name.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((n) => `<option value="${escapeHtml(n.name)}"></option>`)
+    .join('');
+  $('#po-add').hidden = true;
+  $('#po-input').hidden = false;
+  $('#po-input').focus();
+});
+$('#po-input').addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const value = e.target.value;
+    closeParentInput();
+    await addParent(value);
+  } else if (e.key === 'Escape') closeParentInput();
+});
+// Picking from the list fires `input` with the exact name
+$('#po-input').addEventListener('input', async (e) => {
+  if (e.inputType !== 'insertReplacementText' && e.inputType !== undefined) return;
+  const value = e.target.value;
+  if (!resolve(value)) return;
+  closeParentInput();
+  await addParent(value);
+});
+$('#po-input').addEventListener('blur', () => setTimeout(closeParentInput, 150));
+$('#po-chips').addEventListener('click', (e) => {
+  const open = e.target.closest('[data-open]');
+  const remove = e.target.closest('[data-remove]');
+  if (open) {
+    e.preventDefault();
+    openOrCreate(open.dataset.open);
+  } else if (remove) {
+    const note = state.notes.get(state.current);
+    setParents(parseUps(note.content).filter((n) => n !== remove.dataset.remove));
+  }
+});
 
 // Show the note now and give it its own address, so the browser's Back button works
 async function openNote(path) {
@@ -309,6 +450,7 @@ async function renameCurrent() {
   if (!newPath) return;
   editor.replace(state.notes.get(newPath).content);
   editor.refresh();
+  renderPartOf();
   renderSidePanel();
   if (state.mode === 'preview') renderPreview();
   history.replaceState(null, '', noteHash(newPath));
@@ -352,7 +494,7 @@ function setMode(mode) {
 function renderPreview() {
   const note = state.notes.get(state.current);
   if (!note) return;
-  const md = outsideCode(note.content, (part) =>
+  const md = outsideCode(stripFront(note.content), (part) =>
     part.replace(LINK_RE, (_m, inner) => {
       const { target, alias, raw } = parseLink(inner);
       const cls = resolve(target) ? 'wikilink' : 'wikilink unresolved';
@@ -420,7 +562,7 @@ function edited(ts) {
 
 // Small rendered preview of the start of a note, shown as a shrunken page
 function thumbHtml(content) {
-  const md = outsideCode(content.slice(0, 1500), (part) =>
+  const md = outsideCode(stripFront(content).slice(0, 1500), (part) =>
     part.replace(LINK_RE, (_m, inner) => `<span class="wikilink">${escapeHtml(parseLink(inner).alias || parseLink(inner).raw)}</span>`)
   );
   return marked.parse(md);
@@ -437,7 +579,7 @@ function renderNoteGrid() {
     .map((n) => {
       const links = (state.links.get(n.path)?.length || 0) + (backlinks.get(n.path) || 0);
       return `<div class="vault-card note-card" data-path="${escapeHtml(n.path)}" tabindex="0">
-        <div class="doc-thumb"><div class="doc-mini markdown${n.content.trim() ? '' : ' empty'}">${n.content.trim() ? thumbHtml(n.content) : ''}</div></div>
+        <div class="doc-thumb"><div class="doc-mini markdown${stripFront(n.content).trim() ? '' : ' empty'}">${stripFront(n.content).trim() ? thumbHtml(n.content) : ''}</div></div>
         <div class="card-info">
           <div class="card-text">
             <div class="card-name" title="${escapeHtml(n.path)}">${escapeHtml(n.name)}</div>
@@ -566,8 +708,23 @@ function renderSidePanel() {
     ul.appendChild(li);
   };
 
+  // Sub-notes: notes that say they're part of this one
+  const subs = [];
+  if (cur) for (const [p, parents] of state.ups) if (parents.has(cur)) subs.push(p);
+  const sl = $('#subnotes');
+  sl.innerHTML = '';
+  $('#sub-count').textContent = subs.length ? `(${subs.length})` : '';
+  if (!subs.length) none(sl, cur ? 'None yet — use “Part of” on another note' : '—');
+  for (const p of subs.sort()) {
+    const li = document.createElement('li');
+    li.dataset.open = p;
+    li.textContent = nameOf(p);
+    sl.appendChild(li);
+  }
+
+  // Backlinks leave out sub-notes (listed above); outgoing links leave out parents (shown in the Part-of bar)
   const backs = [];
-  if (cur) for (const [p, links] of state.links) if (links.some((l) => l.resolved === cur)) backs.push(p);
+  if (cur) for (const [p, links] of state.links) if (!state.ups.get(p)?.has(cur) && links.some((l) => l.resolved === cur)) backs.push(p);
   $('#bl-count').textContent = backs.length ? `(${backs.length})` : '';
   if (!backs.length) none(bl, cur ? 'No backlinks' : '—');
   for (const p of backs.sort()) {
@@ -584,7 +741,7 @@ function renderSidePanel() {
     bl.appendChild(li);
   }
 
-  const outs = cur ? state.links.get(cur) || [] : [];
+  const outs = cur ? (state.links.get(cur) || []).filter((l) => !state.ups.get(cur)?.has(l.resolved)) : [];
   if (!outs.length) none(ol, cur ? 'No outgoing links' : '—');
   for (const l of outs) {
     const li = document.createElement('li');
@@ -597,7 +754,7 @@ function renderSidePanel() {
     ol.appendChild(li);
   }
 
-  const words = cur ? (state.notes.get(cur)?.content.match(/\S+/g) || []).length : 0;
+  const words = cur ? (stripFront(state.notes.get(cur)?.content || '').match(/\S+/g) || []).length : 0;
   $('#stats').textContent = state.vault ? `${state.notes.size} notes${cur ? ` · ${words} words` : ''}` : '';
 }
 
@@ -724,6 +881,7 @@ api.onVaultChanged(async (vaultId) => {
   const after = state.notes.get(state.current)?.content;
   if (after !== undefined && after !== before && !pendingSave) {
     editor.replace(after);
+    renderPartOf();
     if (state.mode === 'preview') renderPreview();
   }
   renderSidePanel();
@@ -732,7 +890,7 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, ups: state.ups, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
 });
 
