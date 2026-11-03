@@ -56,7 +56,7 @@
     <header class="home-bar">
       <a class="brand" href="#/" title="All vaults"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg><span>Nodebook</span></a>
       <span class="crumb">›</span>
-      <span id="vh-name" class="vh-name" title="Click to rename vault"></span>
+      <span id="vh-name" class="vh-name vault-pill" title="Click to rename vault"><svg class="vault-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg><span></span></span>
       <button id="vh-more" class="icon card-more" title="Rename, export or delete this vault">⋮</button>
       <div class="seg view-toggle">
         <button data-view="docs">Documents</button>
@@ -69,6 +69,17 @@
     </header>
 
     <div id="vh-docs">
+    <section class="vault-hero">
+      <div class="home-inner hero-inner">
+        <div class="hero-icon"><svg class="vault-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg></div>
+        <div class="hero-text">
+          <div class="hero-kicker">Vault</div>
+          <h1 id="vh-title" title="Click to rename vault"></h1>
+          <div id="vh-stats" class="hero-meta"></div>
+        </div>
+        <a class="hero-back" href="#/">← All vaults</a>
+      </div>
+    </section>
     <section class="templates">
       <div class="home-inner">
         <h2>Start a new note</h2>
@@ -125,7 +136,7 @@
       </a>
       <div class="titles">
         <input id="title" spellcheck="false" title="Rename note">
-        <div class="crumbs"><a href="#/">Vaults</a> › <a id="vault-name" href="#/" title="All notes in this vault"></a></div>
+        <div class="crumbs"><a href="#/">Vaults</a> › <a id="vault-name" class="vault-pill" href="#/" title="All notes in this vault"><svg class="vault-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg><span></span></a></div>
       </div>
       <button id="btn-back" class="icon" title="Back (Alt+←)">‹</button>
       <button id="btn-fwd" class="icon" title="Forward (Alt+→)">›</button>
@@ -192,7 +203,7 @@
       <aside id="sidebar">
         <div class="panel-head">
           <button id="btn-collapse" class="icon" title="Hide notes panel">←</button>
-          <span>Notes</span>
+          <span id="panel-vault" class="panel-vault" title="Notes in this vault"><svg class="vault-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg><span></span></span>
           <button id="btn-new" class="icon" title="New note (Alt+N)">＋</button>
         </div>
         <input id="search" type="search" placeholder="Search notes…  Ctrl+P">

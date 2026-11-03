@@ -553,21 +553,72 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; poin
 .menu li:hover { background: var(--bg-hover); }
 .menu li.danger { color: var(--danger); }
 
+/* ---------- "you are in a vault" markers ---------- */
+.vault-icon { width: 1.15em; height: 1.15em; flex-shrink: 0; fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+.vault-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 10px 2px 8px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.vault-pill > span { overflow: hidden; text-overflow: ellipsis; }
+.crumbs .vault-pill { padding: 0 8px 0 6px; font-size: 12px; }
+.crumbs a.vault-pill:hover { color: var(--accent); filter: brightness(1.1); }
+.panel-vault { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--accent); }
+.panel-vault > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.vault-hero { background: var(--bg-side); }
+.hero-inner { display: flex; align-items: center; gap: 18px; padding-top: 26px; padding-bottom: 6px; }
+.hero-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  font-size: 34px;
+}
+.hero-icon .vault-icon { fill: var(--page); }
+.hero-text { flex: 1; min-width: 0; }
+.hero-kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+#vh-title {
+  margin: 2px 0 2px -6px;
+  padding: 0 6px;
+  font-size: 30px;
+  line-height: 1.2;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#vh-title:hover { background: var(--bg-hover); }
+.hero-meta { font-size: 13px; color: var(--text-dim); }
+.hero-back {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+}
+.hero-back:hover { border-color: var(--accent); color: var(--accent); }
+.vault-hero + .templates .home-inner { padding-top: 10px; }
+
 /* ---------- vault overview: notes as document cards ---------- */
 a.brand { text-decoration: none; }
 .crumb { color: var(--text-dim); }
-.vh-name {
-  font-size: 17px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 30vw;
-}
-.vh-name:hover { background: var(--bg-hover); }
+.vh-name { font-size: 15px; padding: 4px 12px 4px 10px; cursor: pointer; max-width: 30vw; }
+.vh-name:hover { filter: brightness(1.1); }
 #vault-home .home-bar input { max-width: 520px; }
 #vault-home { display: flex; flex-direction: column; }
 #vault-home .view-toggle { margin-left: 6px; }
@@ -646,7 +697,11 @@ canvas.tpl-thumb { display: block; padding: 0; }
   .card-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
   .vault-card .thumb, .doc-thumb { height: 150px; }
   .doc-mini { transform: scale(.17); }
-  .vh-name { max-width: 40vw; font-size: 15px; }
+  .vh-name { max-width: 40vw; font-size: 14px; }
+  .hero-inner { gap: 12px; padding-top: 18px; }
+  .hero-icon { width: 48px; height: 48px; font-size: 26px; border-radius: 12px; }
+  #vh-title { font-size: 22px; }
+  .hero-back { display: none; }
   #vault-home .home-bar .icon:not(.theme-toggle):not(#vh-more) { display: none; }
 }
 

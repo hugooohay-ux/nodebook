@@ -171,8 +171,7 @@ async function enterVault(info) {
 function setVaultName(name) {
   state.vault.name = name;
   document.title = `${name} – Nodebook`;
-  $('#vault-name').textContent = name;
-  $('#vh-name').textContent = name;
+  for (const el of ['#vault-name span', '#vh-name > span', '#panel-vault > span', '#vh-title']) $(el).textContent = name;
 }
 
 // The vault page: every note as a document card, or the vault's graph with every note as a node
@@ -590,6 +589,16 @@ function renderNoteGrid() {
       </div>`;
     })
     .join('');
+  // Banner stats for the whole vault
+  const all = [...state.notes.values()];
+  const linkCount = [...state.links.values()].reduce((sum, l) => sum + l.filter((x) => x.resolved).length, 0);
+  const lastEdit = Math.max(0, ...all.map((n) => n.mtime || 0));
+  $('#vh-stats').textContent = [
+    `${all.length} note${all.length === 1 ? '' : 's'}`,
+    `${linkCount} link${linkCount === 1 ? '' : 's'}`,
+    lastEdit ? `last edited ${edited(lastEdit)}` : '',
+  ].filter(Boolean).join(' · ');
+
   const empty = $('#note-empty');
   empty.hidden = notes.length > 0;
   empty.textContent = q ? 'No notes match your search.' : 'No notes yet — start one with “Blank note” above.';
@@ -646,6 +655,7 @@ async function renameVault() {
   setVaultName(name);
 }
 $('#vh-name').addEventListener('click', renameVault);
+$('#vh-title').addEventListener('click', renameVault);
 
 // ⋮ next to the vault name: rename / export / delete this vault
 $('#vh-more').addEventListener('click', (e) => {
