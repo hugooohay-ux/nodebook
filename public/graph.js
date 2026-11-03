@@ -440,8 +440,9 @@ const Graph = (() => {
     return busy;
   }
   // ---------- drawing ----------
-  // Smallest notes are 6px; the one with the most below it grows by up to 26px times the "Node size" slider
-  const radius = (n) => 6 + (n.size || 0) * 26 * settings.sizeMul;
+  // Every note keeps its usual size (by its own links); notes with more below them grow on top of that,
+  // up to 26px times the "Node size" slider (at 0 the graph looks as it did before sizing existed)
+  const radius = (n) => 4 + Math.sqrt(n.deg) * 2.2 + (n.size || 0) * 26 * settings.sizeMul;
 
   function size() {
     const r = canvas.getBoundingClientRect();
