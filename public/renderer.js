@@ -4,14 +4,12 @@ const $ = (s) => document.querySelector(s);
 
 const state = {
   vault: null,
-  notes: new Map(), // path -> { path, name, content }
+  notes: new Map(), // path -> { path, name, content, mtime }
   links: new Map(), // path -> [{ target, resolved }]
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
   mode: 'edit',
-  view: 'note',
-  history: [],
-  hIndex: -1,
+  view: 'home', // 'home' | 'docs' | 'graph' | 'note'
 };
 
 let saveTimer = null;
@@ -88,44 +86,51 @@ function rebuildIndex() {
 // ---------- loading ----------
 async function loadNotes() {
   const list = await api.listNotes();
-  const fresh = new Map(list.map((n) => [n.path, { path: n.path, name: nameOf(n.path), content: n.content }]));
+  const fresh = new Map(list.map((n) => [n.path, { path: n.path, name: nameOf(n.path), content: n.content, mtime: n.mtime }]));
   // Keep unsaved edits for the open note
   if (pendingSave && fresh.has(pendingSave.path)) fresh.get(pendingSave.path).content = pendingSave.content;
   state.notes = fresh;
   rebuildIndex();
 }
 
-const EMPTY_MSG = 'This vault is empty. Create your first note with Alt+N.';
+// ---------- addresses: #/v/<vault> (documents), #/v/<vault>/graph, #/v/<vault>/n/<note path> ----------
+const vaultHash = () => `#/v/${state.vault.id}`;
+const noteHash = (path) => `${vaultHash()}/n/${encodeURIComponent(path)}`;
 
-async function openVault(info) {
+async function enterVault(info) {
   Home.hide();
   Graph.reset();
-  $('#app').hidden = false;
   state.vault = info;
-  document.title = `${info.name} – Nodebook`;
-  $('#vault-name').textContent = info.name;
-  $('#search').value = '';
   state.current = null;
-  state.history = [];
-  state.hIndex = -1;
+  setVaultName(info.name);
+  $('#btn-home').href = $('#vault-name').href = vaultHash();
+  $('#search').value = '';
+  $('#note-search').value = '';
   await loadNotes();
   renderFileList();
-  const first = state.notes.has('Welcome.md') ? 'Welcome.md' : [...state.notes.keys()].sort()[0];
-  if (first) openNote(first);
-  else showEmpty(EMPTY_MSG);
 }
 
-function showEmpty(msg) {
-  state.view = 'empty';
-  Graph.hide();
-  $('#title').value = '';
-  $('#title').disabled = true;
-  syncEditable();
-  $('#empty-msg').textContent = msg;
-  $('#empty').hidden = false;
-  $('#note-view').hidden = true;
-  $('#graph-view').hidden = true;
-  renderSidePanel();
+function setVaultName(name) {
+  state.vault.name = name;
+  document.title = `${name} – Nodebook`;
+  $('#vault-name').textContent = name;
+  $('#vh-name').textContent = name;
+}
+
+// The vault page: every note as a document card, or the vault's graph with every note as a node
+async function showVaultPage(mode) {
+  await flushSave();
+  state.view = mode;
+  $('#app').hidden = true;
+  $('#vault-home').hidden = false;
+  $('#vault-home').classList.toggle('graph-mode', mode === 'graph');
+  document.querySelectorAll('.view-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+  $('#graph-view').hidden = mode !== 'graph';
+  if (mode === 'graph') Graph.show();
+  else {
+    Graph.hide();
+    renderNoteGrid();
+  }
 }
 
 // ---------- saving ----------
@@ -151,23 +156,26 @@ async function flushSave() {
 }
 
 // ---------- opening notes ----------
-async function openNote(path, { push = true } = {}) {
+async function showNote(path) {
   await flushSave();
   if (!state.notes.has(path)) return;
   state.current = path;
-  if (push) {
-    state.history = state.history.slice(0, state.hIndex + 1);
-    if (state.history[state.hIndex] !== path) state.history.push(path);
-    state.hIndex = state.history.length - 1;
-  }
-  setView('note');
+  state.view = 'note';
+  Graph.hide();
+  $('#vault-home').hidden = true;
+  $('#app').hidden = false;
   const note = state.notes.get(path);
   $('#title').value = note.name;
-  $('#title').disabled = false;
   editor.load(note.content);
   setMode(state.mode);
   renderSidePanel();
   highlightActive();
+}
+
+// Show the note now and give it its own address, so the browser's Back button works
+async function openNote(path) {
+  await showNote(path);
+  if (state.current === path && location.hash !== noteHash(path)) location.hash = noteHash(path);
 }
 
 async function createNoteNamed(name) {
@@ -252,9 +260,9 @@ async function newNote() {
   if (!state.vault) return;
   let name = 'Untitled';
   for (let i = 1; resolve(name); i++) name = `Untitled ${i}`;
-  const path = (state.current ? dirOf(state.current) : '') + name + '.md';
+  const path = (state.view === 'note' && state.current ? dirOf(state.current) : '') + name + '.md';
   await api.createNote(path, '');
-  state.notes.set(path, { path, name, content: '' });
+  state.notes.set(path, { path, name, content: '', mtime: Date.now() });
   rebuildIndex();
   renderFileList();
   await openNote(path);
@@ -263,40 +271,25 @@ async function newNote() {
   $('#title').select();
 }
 
-function go(delta) {
-  const i = state.hIndex + delta;
-  if (i < 0 || i >= state.history.length) return;
-  const path = state.history[i];
-  if (!state.notes.has(path)) return;
-  state.hIndex = i;
-  openNote(path, { push: false });
-}
-
 // ---------- rename & delete ----------
-async function renameCurrent() {
-  const note = state.notes.get(state.current);
-  if (!note) return;
-  const newName = $('#title').value.replace(/[\\/:*?"<>|]/g, '').trim();
-  if (!newName || newName === note.name) {
-    $('#title').value = note.name;
-    return;
-  }
+// Renames a note and updates [[Old]], [[Old|alias]] and [[Old#heading]] across the vault. Returns the new path.
+async function renameNote(path, newName) {
+  const note = state.notes.get(path);
+  newName = newName.replace(/[\\/:*?"<>|]/g, '').trim();
+  if (!note || !newName || newName === note.name) return null;
   await flushSave();
   const oldName = note.name;
-  const newPath = dirOf(note.path) + newName + '.md';
+  const newPath = dirOf(path) + newName + '.md';
   try {
-    await api.renameNote(note.path, newPath);
+    await api.renameNote(path, newPath);
   } catch (e) {
-    alert(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
-    $('#title').value = oldName;
-    return;
+    alert(e.message);
+    return null;
   }
-  state.notes.delete(note.path);
-  state.notes.set(newPath, { path: newPath, name: newName, content: note.content });
-  state.history = state.history.map((p) => (p === note.path ? newPath : p));
-  state.current = newPath;
+  state.notes.delete(path);
+  state.notes.set(newPath, { ...note, path: newPath, name: newName });
+  if (state.current === path) state.current = newPath;
 
-  // Update [[Old]], [[Old|alias]] and [[Old#heading]] across the vault
   const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#])`, 'gi');
   for (const n of state.notes.values()) {
     const updated = n.content.replace(re, `[[${newName}`);
@@ -305,46 +298,42 @@ async function renameCurrent() {
       await api.writeNote(n.path, updated);
     }
   }
-  editor.replace(state.notes.get(newPath).content);
   rebuildIndex();
-  editor.refresh();
   renderFileList();
+  return newPath;
+}
+
+async function renameCurrent() {
+  const newPath = await renameNote(state.current, $('#title').value);
+  $('#title').value = nameOf(state.current);
+  if (!newPath) return;
+  editor.replace(state.notes.get(newPath).content);
+  editor.refresh();
   renderSidePanel();
   if (state.mode === 'preview') renderPreview();
+  history.replaceState(null, '', noteHash(newPath));
+}
+
+async function deleteNote(path) {
+  const note = state.notes.get(path);
+  if (!note || !confirm(`Delete "${note.name}"? This can't be undone.`)) return false;
+  if (state.current === path) {
+    clearTimeout(saveTimer);
+    pendingSave = null;
+    state.current = null;
+  }
+  await api.trashNote(path);
+  state.notes.delete(path);
+  rebuildIndex();
+  renderFileList();
+  return true;
 }
 
 async function deleteCurrent() {
-  const note = state.notes.get(state.current);
-  if (!note) return;
-  if (!confirm(`Delete "${note.name}"? This can't be undone.`)) return;
-  clearTimeout(saveTimer);
-  pendingSave = null;
-  await api.trashNote(note.path);
-  state.notes.delete(note.path);
-  state.history = state.history.filter((p) => p !== note.path);
-  state.hIndex = state.history.length - 1;
-  rebuildIndex();
-  renderFileList();
-  const next = state.history[state.hIndex] || [...state.notes.keys()].sort()[0];
-  if (next) openNote(next, { push: false });
-  else {
-    state.current = null;
-    showEmpty(EMPTY_MSG);
-  }
+  if (await deleteNote(state.current)) location.replace(vaultHash());
 }
 
 // ---------- rendering ----------
-function setView(view) {
-  state.view = view;
-  $('#empty').hidden = true;
-  $('#note-view').hidden = view !== 'note';
-  $('#graph-view').hidden = view !== 'graph';
-  $('#btn-graph').classList.toggle('active', view === 'graph');
-  if (view === 'graph') Graph.show();
-  else Graph.hide();
-  syncEditable();
-}
-
 // Formatting toolbar only works while editing a note
 function syncEditable() {
   document.body.classList.toggle('no-edit', state.view !== 'note' || state.mode !== 'edit');
@@ -352,7 +341,7 @@ function syncEditable() {
 
 function setMode(mode) {
   state.mode = mode;
-  document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  document.querySelectorAll('#topbar .seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
   $('#editor').hidden = mode !== 'edit';
   $('#preview').hidden = mode !== 'preview';
   syncEditable();
@@ -419,6 +408,103 @@ function renderFileList() {
 function highlightActive() {
   document.querySelectorAll('#file-list li.note').forEach((li) => li.classList.toggle('active', li.dataset.path === state.current));
 }
+
+// ---------- vault page: notes as document cards ----------
+function edited(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+}
+
+// Small rendered preview of the start of a note, shown as a shrunken page
+function thumbHtml(content) {
+  const md = outsideCode(content.slice(0, 1500), (part) =>
+    part.replace(LINK_RE, (_m, inner) => `<span class="wikilink">${escapeHtml(parseLink(inner).alias || parseLink(inner).raw)}</span>`)
+  );
+  return marked.parse(md);
+}
+
+function renderNoteGrid() {
+  const q = $('#note-search').value.trim().toLowerCase();
+  const backlinks = new Map();
+  for (const links of state.links.values()) for (const l of links) if (l.resolved) backlinks.set(l.resolved, (backlinks.get(l.resolved) || 0) + 1);
+  const notes = [...state.notes.values()]
+    .filter((n) => !q || n.name.toLowerCase().includes(q) || n.content.toLowerCase().includes(q))
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0) || a.name.localeCompare(b.name));
+  $('#note-grid').innerHTML = notes
+    .map((n) => {
+      const links = (state.links.get(n.path)?.length || 0) + (backlinks.get(n.path) || 0);
+      return `<div class="vault-card note-card" data-path="${escapeHtml(n.path)}" tabindex="0">
+        <div class="doc-thumb"><div class="doc-mini markdown${n.content.trim() ? '' : ' empty'}">${n.content.trim() ? thumbHtml(n.content) : ''}</div></div>
+        <div class="card-info">
+          <div class="card-text">
+            <div class="card-name" title="${escapeHtml(n.path)}">${escapeHtml(n.name)}</div>
+            <div class="card-meta"><span class="card-icon doc"></span> ${n.mtime ? 'Edited ' + edited(n.mtime) : ''}${links ? ` · ${links} link${links === 1 ? '' : 's'}` : ''}</div>
+          </div>
+          <button class="card-more icon" title="More actions">⋮</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+  const empty = $('#note-empty');
+  empty.hidden = notes.length > 0;
+  empty.textContent = q ? 'No notes match your search.' : 'No notes yet — start one with “Blank note” above.';
+}
+
+let noteMenuFor = null;
+function closeNoteMenu() {
+  $('#note-menu').hidden = true;
+  noteMenuFor = null;
+}
+
+$('#note-grid').addEventListener('click', (e) => {
+  const card = e.target.closest('.note-card');
+  if (!card) return;
+  if (e.target.closest('.card-more')) {
+    e.stopPropagation();
+    const r = e.target.getBoundingClientRect();
+    const menu = $('#note-menu');
+    noteMenuFor = card.dataset.path;
+    menu.hidden = false;
+    menu.style.left = Math.min(r.left, innerWidth - menu.offsetWidth - 8) + 'px';
+    menu.style.top = Math.min(r.bottom + 4, innerHeight - menu.offsetHeight - 8) + 'px';
+    return;
+  }
+  openNote(card.dataset.path);
+});
+$('#note-grid').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.classList.contains('note-card')) openNote(e.target.dataset.path);
+});
+$('#note-menu').addEventListener('click', async (e) => {
+  const li = e.target.closest('li');
+  const path = noteMenuFor;
+  closeNoteMenu();
+  if (!li || !path) return;
+  if (li.dataset.act === 'open') openNote(path);
+  else if (li.dataset.act === 'rename') {
+    const name = prompt('Rename note', nameOf(path));
+    if (name && (await renameNote(path, name))) renderNoteGrid();
+  } else if (li.dataset.act === 'delete') {
+    if (await deleteNote(path)) renderNoteGrid();
+  }
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#note-menu')) closeNoteMenu(); });
+
+$('#note-search').addEventListener('input', renderNoteGrid);
+$('#vh-new').addEventListener('click', newNote);
+document.querySelectorAll('.view-toggle button').forEach((b) =>
+  b.addEventListener('click', () => { location.hash = b.dataset.view === 'graph' ? `${vaultHash()}/graph` : vaultHash(); })
+);
+$('#vh-name').addEventListener('click', async () => {
+  const name = prompt('Rename vault', state.vault.name)?.trim();
+  if (!name || name === state.vault.name) return;
+  await api.renameVault(state.vault.id, name);
+  setVaultName(name);
+});
+$('#vh-export').addEventListener('click', () => api.exportVault());
+$('#vh-import').addEventListener('click', () => $('#file-input').click());
 
 function linkContext(content, targetPath) {
   for (const line of stripCode(content).split('\n')) {
@@ -520,13 +606,11 @@ $('#title').addEventListener('keydown', (e) => {
 });
 $('#title').addEventListener('change', renameCurrent);
 
-document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.querySelectorAll('#topbar .seg button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 $('#btn-new').addEventListener('click', newNote);
-$('#btn-graph').addEventListener('click', () => (state.view === 'graph' && state.current ? openNote(state.current, { push: false }) : setView('graph')));
 $('#btn-delete').addEventListener('click', deleteCurrent);
-$('#btn-back').addEventListener('click', () => go(-1));
-$('#btn-fwd').addEventListener('click', () => go(1));
-$('#btn-first-note').addEventListener('click', newNote);
+$('#btn-back').addEventListener('click', () => history.back());
+$('#btn-fwd').addEventListener('click', () => history.forward());
 $('#btn-export').addEventListener('click', async () => {
   await flushSave();
   api.exportVault();
@@ -542,19 +626,13 @@ $('#file-input').addEventListener('change', async (e) => {
     if (!count) return;
     await loadNotes();
     renderFileList();
-    if (!state.current) openNote([...state.notes.keys()].sort()[0]);
+    if (state.view === 'docs') renderNoteGrid();
+    else if (state.view === 'graph') Graph.rebuild();
     else renderSidePanel();
+    toast(`Imported ${count} note${count === 1 ? '' : 's'}`);
   } catch (err) {
     alert('Could not import: ' + err.message);
   }
-});
-$('#vault-name').addEventListener('click', async () => {
-  const name = prompt('Rename vault', state.vault.name)?.trim();
-  if (!name || name === state.vault.name) return;
-  await api.renameVault(state.vault.id, name);
-  state.vault.name = name;
-  $('#vault-name').textContent = name;
-  document.title = `${name} – Nodebook`;
 });
 $('#btn-menu').addEventListener('click', () => document.body.classList.toggle('show-sidebar'));
 
@@ -573,12 +651,17 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   // Ctrl+N can't be intercepted in browsers, so new note is Alt+N
   if (e.altKey && k === 'n') { e.preventDefault(); newNote(); }
-  else if (e.ctrlKey && k === 'g') { e.preventDefault(); $('#btn-graph').click(); }
-  else if (e.ctrlKey && (k === 'p' || k === 'o')) { e.preventDefault(); $('#search').focus(); $('#search').select(); }
-  else if (e.ctrlKey && k === 'e' && state.current) { e.preventDefault(); if (state.view !== 'note') openNote(state.current, { push: false }); setMode(state.mode === 'edit' ? 'preview' : 'edit'); }
+  // Ctrl+G: the vault's graph (or back to its documents when already there)
+  else if (e.ctrlKey && k === 'g') { e.preventDefault(); location.hash = state.view === 'graph' ? vaultHash() : `${vaultHash()}/graph`; }
+  else if (e.ctrlKey && (k === 'p' || k === 'o')) {
+    e.preventDefault();
+    const box = state.view === 'note' ? $('#search') : $('#note-search');
+    if (state.view === 'graph') location.hash = vaultHash();
+    box.focus();
+    box.select();
+  }
+  else if (e.ctrlKey && k === 'e' && state.view === 'note') { e.preventDefault(); setMode(state.mode === 'edit' ? 'preview' : 'edit'); }
   else if (e.ctrlKey && k === 's') { e.preventDefault(); flushSave(); }
-  else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
-  else if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); go(1); }
 });
 
 window.addEventListener('beforeunload', () => {
@@ -595,12 +678,10 @@ api.onVaultChanged(async (vaultId) => {
   const before = state.notes.get(state.current)?.content;
   await loadNotes();
   renderFileList();
-  if (state.current && !state.notes.has(state.current)) {
-    const next = [...state.notes.keys()].sort()[0];
+  if (state.view === 'docs') return renderNoteGrid();
+  if (state.view === 'note' && !state.notes.has(state.current)) {
     state.current = null;
-    if (next) openNote(next, { push: false });
-    else showEmpty(EMPTY_MSG);
-    return;
+    return location.replace(vaultHash());
   }
   const after = state.notes.get(state.current)?.content;
   if (after !== undefined && after !== before && !pendingSave) {
@@ -617,21 +698,32 @@ Graph.init($('#graph'), {
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
 });
 
-// Routes: #/ (home) and #/v/<vault id>
+// Routes: #/ (all vaults), #/v/<vault> (its documents), #/v/<vault>/graph, #/v/<vault>/n/<note path>
 async function route() {
   await flushSave();
-  const m = location.hash.match(/^#\/v\/([\w-]+)/);
-  if (m) {
-    const info = await api.openVault(m[1]);
-    if (info) return openVault(info);
-    return location.replace('#/');
+  const m = location.hash.match(/^#\/v\/([\w-]+)(?:\/(graph|n\/(.*)))?$/);
+  if (!m) {
+    api.closeVault();
+    state.vault = null;
+    state.current = null;
+    state.view = 'home';
+    Graph.hide();
+    $('#app').hidden = true;
+    $('#vault-home').hidden = true;
+    return Home.show();
   }
-  api.closeVault();
-  state.vault = null;
-  state.current = null;
-  Graph.hide();
-  $('#app').hidden = true;
-  Home.show();
+  if (!state.vault || state.vault.id !== m[1]) {
+    const info = await api.openVault(m[1]);
+    if (!info) return location.replace('#/');
+    await enterVault(info);
+  }
+  if (m[3] !== undefined) {
+    const path = decodeURIComponent(m[3]);
+    if (!state.notes.has(path)) return location.replace(vaultHash());
+    if (state.view === 'note' && state.current === path) return; // already showing it
+    return showNote(path);
+  }
+  showVaultPage(m[2] === 'graph' ? 'graph' : 'docs');
 }
 window.addEventListener('hashchange', route);
 route();

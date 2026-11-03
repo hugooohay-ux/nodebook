@@ -343,7 +343,7 @@ const Graph = (() => {
       cam.k = k;
     }, { passive: false });
 
-    const on = (id, ev, fn) => document.getElementById(id).addEventListener(ev, fn);
+    const on = (id, ev, fn) => document.getElementById(id)?.addEventListener(ev, fn);
     on('graph-filter', 'input', (e) => { settings.filter = e.target.value.trim(); });
     on('g-local', 'change', (e) => { settings.local = e.target.checked; rebuild(); fitPending = true; });
     on('g-depth', 'input', (e) => { settings.depth = +e.target.value; if (settings.local) { rebuild(); fitPending = true; } });

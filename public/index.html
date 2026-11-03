@@ -12,14 +12,14 @@
 <body>
   <!-- ---------- home: all vaults ---------- -->
   <div id="home" hidden>
-    <header id="home-bar">
+    <header id="home-bar" class="home-bar">
       <span class="brand">◉ Nodebook</span>
       <input id="vault-search" type="search" placeholder="Search vaults">
       <button id="btn-import-vault" title="Import a .zip of Markdown notes as a new vault">Import .zip</button>
       <button class="icon theme-toggle"></button>
     </header>
 
-    <section id="templates">
+    <section id="templates" class="templates">
       <div class="home-inner">
         <h2>Start a new vault</h2>
         <div class="template-row">
@@ -39,7 +39,7 @@
       <div class="vaults-head">
         <h2>Your vaults</h2>
       </div>
-      <div id="vault-grid"></div>
+      <div id="vault-grid" class="card-grid"></div>
       <p id="vault-empty" hidden>No vaults match your search.</p>
     </section>
   </div>
@@ -51,16 +51,74 @@
     <li data-act="delete" class="danger">Delete</li>
   </ul>
 
+  <!-- ---------- inside a vault: every note as a document card ---------- -->
+  <div id="vault-home" hidden>
+    <header class="home-bar">
+      <a class="brand" href="#/" title="All vaults">◉ Nodebook</a>
+      <span class="crumb">›</span>
+      <span id="vh-name" class="vh-name" title="Click to rename vault"></span>
+      <div class="seg view-toggle">
+        <button data-view="docs">Documents</button>
+        <button data-view="graph" title="Graph view (Ctrl+G)">Graph</button>
+      </div>
+      <input id="note-search" type="search" placeholder="Search notes">
+      <button id="vh-import" class="icon" title="Import .md or .zip files into this vault">⤒</button>
+      <button id="vh-export" class="icon" title="Export vault as .zip">⤓</button>
+      <button class="icon theme-toggle"></button>
+    </header>
+
+    <div id="vh-docs">
+    <section class="templates">
+      <div class="home-inner">
+        <h2>Start a new note</h2>
+        <div class="template-row">
+          <button class="template" id="vh-new">
+            <span class="tpl-thumb blank">＋</span>
+            <span class="tpl-name">Blank note</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-inner">
+      <div class="vaults-head">
+        <h2>Notes</h2>
+      </div>
+      <div id="note-grid" class="card-grid"></div>
+      <p id="note-empty" class="grid-empty" hidden></p>
+    </section>
+    </div>
+
+    <section id="graph-view" hidden>
+      <canvas id="graph"></canvas>
+      <div id="graph-controls">
+        <input id="graph-filter" type="search" placeholder="Highlight…">
+        <label><input type="checkbox" id="g-unresolved" checked> Unresolved links</label>
+        <label><input type="checkbox" id="g-orphans" checked> Orphans</label>
+        <label class="sub">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
+        <label class="sub">Link distance <input type="range" id="g-dist" min="20" max="250" value="80"></label>
+        <button id="g-fit">Fit to view</button>
+      </div>
+      <div id="graph-stats"></div>
+    </section>
+  </div>
+
+  <ul id="note-menu" class="menu" hidden>
+    <li data-act="open">Open</li>
+    <li data-act="rename">Rename</li>
+    <li data-act="delete" class="danger">Delete</li>
+  </ul>
+
   <!-- ---------- inside a vault ---------- -->
   <div id="app" hidden>
     <header id="topbar">
       <button id="btn-menu" class="icon" title="Notes">☰</button>
-      <a id="btn-home" href="#/" title="All vaults">
+      <a id="btn-home" href="#/" title="All notes in this vault">
         <svg viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg>
       </a>
       <div class="titles">
         <input id="title" spellcheck="false" title="Rename note">
-        <div class="crumbs"><a href="#/">Vaults</a> › <span id="vault-name" title="Click to rename vault"></span></div>
+        <div class="crumbs"><a href="#/">Vaults</a> › <a id="vault-name" href="#/" title="All notes in this vault"></a></div>
       </div>
       <button id="btn-back" class="icon" title="Back (Alt+←)">‹</button>
       <button id="btn-fwd" class="icon" title="Forward (Alt+→)">›</button>
@@ -68,7 +126,6 @@
         <button data-mode="edit">Edit</button>
         <button data-mode="preview">Read</button>
       </div>
-      <button id="btn-graph" title="Graph view (Ctrl+G)">◉ Graph</button>
       <span class="top-tools">
         <button id="btn-import" class="icon" title="Import .md or .zip files into this vault">⤒</button>
         <button id="btn-export" class="icon" title="Export vault as .zip">⤓</button>
@@ -139,33 +196,10 @@
       </button>
 
     <main id="main">
-      <section id="note-view" hidden>
+      <section id="note-view">
         <div id="content">
           <div id="editor"></div>
           <div id="preview"><article class="page markdown"></article></div>
-        </div>
-      </section>
-
-      <section id="graph-view" hidden>
-        <canvas id="graph"></canvas>
-        <div id="graph-controls">
-          <input id="graph-filter" type="search" placeholder="Highlight…">
-          <label><input type="checkbox" id="g-local"> Local (current note)</label>
-          <label class="sub">Depth <input type="range" id="g-depth" min="1" max="4" value="1"></label>
-          <label><input type="checkbox" id="g-unresolved" checked> Unresolved links</label>
-          <label><input type="checkbox" id="g-orphans" checked> Orphans</label>
-          <label class="sub">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
-          <label class="sub">Link distance <input type="range" id="g-dist" min="20" max="250" value="80"></label>
-          <button id="g-fit">Fit to view</button>
-        </div>
-        <div id="graph-stats"></div>
-      </section>
-
-      <section id="empty">
-        <div class="empty-inner">
-          <h1>Nodebook</h1>
-          <p id="empty-msg">This vault is empty.</p>
-          <button id="btn-first-note" class="primary">Create a note</button>
         </div>
       </section>
     </main>

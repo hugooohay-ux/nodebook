@@ -148,7 +148,7 @@ const Home = (() => {
 
   // ---------- events ----------
   $('#vault-search').addEventListener('input', render);
-  document.querySelectorAll('.template').forEach((b) => b.addEventListener('click', () => create(b.dataset.template)));
+  document.querySelectorAll('#home .template').forEach((b) => b.addEventListener('click', () => create(b.dataset.template)));
 
   $('#vault-grid').addEventListener('click', (e) => {
     const card = e.target.closest('.vault-card');
