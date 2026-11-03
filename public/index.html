@@ -106,11 +106,11 @@
         <input id="graph-filter" type="search" placeholder="Highlight…">
         <label><input type="checkbox" id="g-unresolved" checked> Unresolved links</label>
         <label><input type="checkbox" id="g-orphans" checked> Orphans</label>
-        <label class="sub">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
-        <label class="sub">Link distance <input type="range" id="g-dist" min="20" max="250" value="80"></label>
+        <label class="sub" title="How strongly notes push each other apart">Repel <input type="range" id="g-repel" min="50" max="1500" value="500"></label>
+          <label class="sub" title="How long the lines between linked notes are">Spacing <input type="range" id="g-dist" min="20" max="250" value="80"></label>
         <label class="sub" title="Notes with more below them are bigger (left: all the same size)">Node size <input type="range" id="g-size" min="0" max="3" step="0.1" value="1"></label>
         <button id="g-fit">Fit to view</button>
-        <button id="g-unpin" title="Let every placed note float again">Unpin all</button>
+        <button id="g-unpin" title="Drop pins and moved notes, and find a clean layout again">Reset layout</button>
         <div class="g-groups-head">Groups</div>
         <ul id="g-groups"></ul>
         <label title="Notes in the same group drift towards each other"><input type="checkbox" id="g-pull" checked> Pull groups together</label>

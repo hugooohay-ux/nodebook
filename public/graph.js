@@ -1,4 +1,4 @@
-// Force-directed graph of notes, drawn on a canvas. No dependencies.
+// Graph of notes, drawn on a canvas. No dependencies.
 const Graph = (() => {
   // Colours come from the CSS theme variables so the graph follows light/dark
   let COLORS = {};
@@ -22,6 +22,7 @@ const Graph = (() => {
   let byId = new Map();
   const positions = new Map(); // survives rebuilds so the layout doesn't jump
   const pins = new Map(); // notes placed by hand: id -> { x, y }, saved with the vault
+  const held = new Set(); // notes dropped somewhere by hand this session (stay put, not saved)
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
   let visible = false;
@@ -63,9 +64,11 @@ const Graph = (() => {
         map.get(id).nbrs.add(src);
       }
     }
+    if (ctx) ctx.font = '12px "Segoe UI", sans-serif';
     for (const n of map.values()) {
       n.deg = n.nbrs.size;
       n.links = n.up.size + n.down.size; // total links: ones it makes plus ones made to it
+      n.labelW = ctx ? ctx.measureText(n.label).width : n.label.length * 6.5; // label width on screen, in px
     }
 
     let keep = [...map.values()];
@@ -104,6 +107,7 @@ const Graph = (() => {
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
     nodes = keep;
 
+    let added = false;
     for (const n of nodes) {
       const pin = pins.get(n.id);
       const p = positions.get(n.id);
@@ -111,20 +115,17 @@ const Graph = (() => {
       if (pin) Object.assign(n, { x: pin.x, y: pin.y, vx: 0, vy: 0 });
       else if (p) Object.assign(n, p);
       else {
-        // Spawn next to an already placed neighbour when possible
+        // New note: start next to a note it links to, a little way out
+        added = true;
         const nb = [...n.nbrs].map((id) => positions.get(id)).find(Boolean);
         const a = Math.random() * Math.PI * 2;
-        const r = nb ? 30 : Math.sqrt(nodes.length) * 40 * Math.random();
-        n.x = (nb ? nb.x : 0) + Math.cos(a) * r;
-        n.y = (nb ? nb.y : 0) + Math.sin(a) * r;
-        n.vx = 0;
-        n.vy = 0;
+        const r = nb ? settings.dist : Math.sqrt(nodes.length) * 40 * Math.random();
+        Object.assign(n, { x: (nb ? nb.x : 0) + Math.cos(a) * r, y: (nb ? nb.y : 0) + Math.sin(a) * r, vx: 0, vy: 0 });
       }
     }
     if (hover && !byId.has(hover.id)) hover = null;
     chainFor = undefined; // recompute the hover chain against the new nodes
-    alpha = Math.max(alpha, 0.5);
-    untangleBudget = 900;
+    if (added) alpha = Math.max(alpha, 0.3); // let newcomers settle in; otherwise stay still
   }
 
   // Notes reachable from `start` by following links in one direction only ('down' or 'up'), with steps away
@@ -157,18 +158,12 @@ const Graph = (() => {
     return { all, below, above };
   }
 
-  // ---------- simulation ----------
-  let crossings = 0; // how many pairs of lines cross right now
-  let untangleBudget = 0; // steps left to keep untangling; reset whenever the layout changes
-
-  // Do segments p–q and r–s cross (not just touch)?
-  const turn = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
-  const segmentsCross = (p, q, r, s) => turn(p, q, r) * turn(p, q, s) < 0 && turn(r, s, p) * turn(r, s, q) < 0;
-
+  // ---------- motion: a calm free-form layout ----------
+  // Notes push each other apart, links pull their two notes together, and everything slows to a stop.
+  // Nothing keeps "correcting" afterwards, so the graph doesn't twitch.
   function tick() {
-    const n = nodes.length;
     const a = alpha;
-    const repel = settings.repel;
+    const n = nodes.length;
     for (let i = 0; i < n; i++) {
       const p = nodes[i];
       for (let j = i + 1; j < n; j++) {
@@ -178,7 +173,7 @@ const Graph = (() => {
         let d2 = dx * dx + dy * dy;
         if (d2 > 360000) continue;
         if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.5; }
-        const f = (repel * a) / d2;
+        const f = (settings.repel * a) / d2;
         p.vx += dx * f; p.vy += dy * f;
         q.vx -= dx * f; q.vy -= dy * f;
       }
@@ -190,49 +185,6 @@ const Graph = (() => {
       const f = ((d - settings.dist) / d) * 0.06 * a;
       p.vx += dx * f; p.vy += dy * f;
       q.vx -= dx * f; q.vy -= dy * f;
-    }
-    // Untangle: two lines that cross are pushed apart (whole lines, away from each other) until they don't
-    crossings = 0;
-    if (edges.length < 1500) {
-      for (let i = 0; i < edges.length; i++) {
-        const [p, q] = edges[i];
-        for (let j = i + 1; j < edges.length; j++) {
-          const [r, s] = edges[j];
-          if (p === r || p === s || q === r || q === s || !segmentsCross(p, q, r, s)) continue;
-          crossings++;
-          let vx = (p.x + q.x - r.x - s.x) / 2;
-          let vy = (p.y + q.y - r.y - s.y) / 2;
-          let len = Math.hypot(vx, vy);
-          if (len < 1) { vx = -(q.y - p.y); vy = q.x - p.x; len = Math.hypot(vx, vy) || 1; }
-          const f = 1.5 / len;
-          for (const n of [p, q]) if (!n.pinned) { n.vx += vx * f; n.vy += vy * f; }
-          for (const n of [r, s]) if (!n.pinned) { n.vx -= vx * f; n.vy -= vy * f; }
-        }
-      }
-    }
-
-    // Keep notes off lines that aren't theirs: push the note sideways, and the line a little the other way
-    if (nodes.length * edges.length < 300000) {
-      for (const [p, q] of edges) {
-        const dx = q.x - p.x;
-        const dy = q.y - p.y;
-        const len2 = dx * dx + dy * dy || 1;
-        for (const m of nodes) {
-          if (m === p || m === q) continue;
-          const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
-          if (t <= 0 || t >= 1) continue;
-          let ox = m.x - (p.x + t * dx);
-          let oy = m.y - (p.y + t * dy);
-          let d = Math.hypot(ox, oy);
-          const clear = radius(m) + 18; // room for the note and its label
-          if (d >= clear) continue;
-          if (d < 0.01) { ox = -dy; oy = dx; d = Math.hypot(ox, oy) || 1; }
-          const push = ((clear - d) / d) * 0.25 * Math.max(a, 0.05);
-          m.vx += ox * push; m.vy += oy * push;
-          p.vx -= ox * push * 0.3; p.vy -= oy * push * 0.3;
-          q.vx -= ox * push * 0.3; q.vy -= oy * push * 0.3;
-        }
-      }
     }
     // Notes in the same group drift towards the group's middle
     if (settings.pull) {
@@ -246,31 +198,116 @@ const Graph = (() => {
       for (const p of nodes) {
         const c = p.group && centres.get(p.group.id);
         if (!c || c.n < 2) continue;
-        p.vx += (c.x / c.n - p.x) * 0.04 * a;
-        p.vy += (c.y / c.n - p.y) * 0.04 * a;
+        p.vx += (c.x / c.n - p.x) * 0.02 * a;
+        p.vy += (c.y / c.n - p.y) * 0.02 * a;
       }
     }
     for (const p of nodes) {
       p.vx -= p.x * 0.004 * a;
       p.vy -= p.y * 0.004 * a;
-      // Dragged and placed notes stay where they are; everything else flows around them
-      if ((drag && drag.node === p) || p.pinned) { p.vx = p.vy = 0; continue; }
+      if (isHeld(p)) { p.vx = p.vy = 0; continue; }
       p.vx *= 0.6;
       p.vy *= 0.6;
       const v = Math.hypot(p.vx, p.vy);
       if (v > 40) { p.vx *= 40 / v; p.vy *= 40 / v; }
       p.x += p.vx;
       p.y += p.vy;
-      positions.set(p.id, { x: p.x, y: p.y, vx: p.vx, vy: p.vy });
     }
-    // Keep settling while lines still cross, for a limited number of steps (some link patterns can't be uncrossed)
-    if (crossings && untangleBudget > 0) untangleBudget--;
-    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0, crossings && untangleBudget > 0 ? 0.08 : 0);
+    // Notes never overlap: anything closer than their sizes allow is moved apart directly
+    for (let i = 0; i < n; i++) {
+      const p = nodes[i];
+      for (let j = i + 1; j < n; j++) {
+        const q = nodes[j];
+        const need = radius(p) + radius(q) + 10;
+        let dx = q.x - p.x;
+        let dy = q.y - p.y;
+        if (Math.abs(dx) > need || Math.abs(dy) > need) continue;
+        let d = Math.hypot(dx, dy);
+        if (d >= need) continue;
+        if (d < 0.01) { dx = 1; dy = 0; d = 1; }
+        const fp = isHeld(p);
+        const fq = isHeld(q);
+        if (fp && fq) continue;
+        const sp = fp ? 0 : fq ? 1 : 0.5;
+        const move = need - d;
+        p.x -= (dx / d) * move * sp; p.y -= (dy / d) * move * sp;
+        q.x += (dx / d) * move * (1 - sp); q.y += (dy / d) * move * (1 - sp);
+      }
+    }
+    for (const p of nodes) positions.set(p.id, { x: p.x, y: p.y, vx: p.vx, vy: p.vy });
+    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0);
   }
 
+  // Held notes don't move: the one being dragged, pinned ones, and ones you've dropped somewhere this session
+  const isHeld = (p) => (drag && drag.node === p) || p.pinned || held.has(p.id);
+
+  // ---------- choosing a clean starting layout ----------
+  // Lines crossing, lines running through other notes, and labels on top of each other are what make a graph
+  // look messy. We try many starting arrangements, let each settle, score it, and keep the cleanest one.
+  const turn = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+  const segmentsCross = (p, q, r, s) => turn(p, q, r) * turn(p, q, s) < 0 && turn(r, s, p) * turn(r, s, q) < 0;
+  function countCrossings() {
+    let k = 0;
+    for (let i = 0; i < edges.length; i++) {
+      for (let j = i + 1; j < edges.length; j++) {
+        const [p, q] = edges[i];
+        const [r, s] = edges[j];
+        if (p !== r && p !== s && q !== r && q !== s && segmentsCross(p, q, r, s)) k++;
+      }
+    }
+    return k;
+  }
+  function messiness() {
+    let lineThroughNote = 0;
+    for (const [p, q] of edges) {
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const len2 = dx * dx + dy * dy || 1;
+      for (const m of nodes) {
+        if (m === p || m === q) continue;
+        const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
+        if (t <= 0 || t >= 1) continue;
+        // the note plus its label (drawn below it)
+        if (Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 10) lineThroughNote++;
+      }
+    }
+    let labelsOverlap = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const p = nodes[i];
+        const q = nodes[j];
+        if (Math.abs(p.x - q.x) < (p.labelW + q.labelW) / 2 + 6 && Math.abs(p.y + radius(p) - q.y - radius(q)) < 16) labelsOverlap++;
+      }
+    }
+    return countCrossings() * 1000 + lineThroughNote * 50 + labelsOverlap * 5;
+  }
+  function findCleanLayout(budgetMs = 400) {
+    const until = performance.now() + budgetMs;
+    const free = nodes.filter((n) => !n.pinned && !held.has(n.id));
+    if (!free.length) return;
+    const spread = Math.sqrt(nodes.length) * 60;
+    let best = null;
+    let bestScore = Infinity;
+    for (let seed = 1; ; seed++) {
+      let s = seed * 7919;
+      const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+      for (const n of free) Object.assign(n, { x: (rand() - 0.5) * spread, y: (rand() - 0.5) * spread, vx: 0, vy: 0 });
+      alpha = 1;
+      for (let i = 0; i < 400 && alpha > 0.005; i++) tick();
+      const score = messiness();
+      if (score < bestScore) {
+        bestScore = score;
+        best = free.map((n) => [n, n.x, n.y]);
+      }
+      if (bestScore === 0 || performance.now() > until) break;
+    }
+    for (const [n, x, y] of best) Object.assign(n, { x, y, vx: 0, vy: 0 });
+    for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+    alpha = 0; // settled and clean: stay still
+  }
   // ---------- drawing ----------
-  // Smallest notes are 4px; the one with the most below it grows by up to 16px times the "Node size" slider
-  const radius = (n) => 4 + (n.size || 0) * 16 * settings.sizeMul;
+  // Smallest notes are 6px; the one with the most below it grows by up to 26px times the "Node size" slider
+  const radius = (n) => 6 + (n.size || 0) * 26 * settings.sizeMul;
 
   function size() {
     const r = canvas.getBoundingClientRect();
@@ -473,7 +510,14 @@ const Graph = (() => {
       ctx.font = `${n.hot > 0.5 ? 600 : 400} ${size / cam.k}px "Segoe UI", sans-serif`;
       ctx.globalAlpha = a;
       const r = radius(n) * (1 + n.hot * 0.45 + n.nb * 0.15);
-      ctx.fillText(n.label, n.x, n.y + r + (3 + n.hot * 4) / cam.k);
+      const ly = n.y + r + (3 + n.hot * 4) / cam.k;
+      // A thin outline in the background colour hides any line running behind the text
+      ctx.strokeStyle = COLORS.bg;
+      ctx.lineWidth = 4 / cam.k;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(n.label, n.x, ly);
+      ctx.fillStyle = COLORS.label;
+      ctx.fillText(n.label, n.x, ly);
     }
     ctx.globalAlpha = 1;
   }
@@ -531,6 +575,7 @@ const Graph = (() => {
         drag.node.x = p.x;
         drag.node.y = p.y;
         positions.set(drag.node.id, { x: p.x, y: p.y, vx: 0, vy: 0 });
+        alpha = Math.max(alpha, 0.3); // its neighbours adjust gently while you drag
       } else if (drag?.pan) {
         cam.x = drag.cx + (p.sx - drag.sx);
         cam.y = drag.cy + (p.sy - drag.sy);
@@ -544,7 +589,8 @@ const Graph = (() => {
       const p = toWorld(e);
       const clicked = downAt && Math.hypot(p.sx - downAt.sx, p.sy - downAt.sy) < 4;
       if (drag.node && clicked) opts.onOpen(drag.node);
-      else if (drag.node) setPin(drag.node, true); // dropped somewhere new: it stays there
+      else if (drag.node?.pinned) setPin(drag.node, true); // moved a pinned note: pin it at its new spot
+      else if (drag.node) held.add(drag.node.id); // let go: it stays where you dropped it (this session, no pin)
       drag = null;
       downAt = null;
     });
@@ -572,24 +618,25 @@ const Graph = (() => {
     on('g-depth', 'input', (e) => { settings.depth = +e.target.value; if (settings.local) { rebuild(); fitPending = true; } });
     on('g-unresolved', 'change', (e) => { settings.unresolved = e.target.checked; rebuild(); });
     on('g-orphans', 'change', (e) => { settings.orphans = e.target.checked; rebuild(); });
-    on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); untangleBudget = 600; });
-    on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); untangleBudget = 600; });
+    on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
+    on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
     on('g-size', 'input', (e) => {
       settings.sizeMul = +e.target.value;
       alpha = Math.max(alpha, 0.3); // bigger notes need a bit more room
-      untangleBudget = 600;
       try { localStorage.setItem('nodebook:graph', JSON.stringify({ sizeMul: settings.sizeMul })); } catch { /* storage blocked */ }
     });
     const sizeSlider = document.getElementById('g-size');
     if (sizeSlider) sizeSlider.value = settings.sizeMul;
     on('g-fit', 'click', fit);
-    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.5); untangleBudget = 600; });
+    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.4); });
     on('g-unpin', 'click', () => {
+      // Reset layout: drop pins and drags, then find a clean layout again
       pins.clear();
+      held.clear();
       for (const n of nodes) n.pinned = false;
       savePins();
-      alpha = Math.max(alpha, 0.6);
-      untangleBudget = 900;
+      findCleanLayout();
+      fit();
     });
   }
 
@@ -604,7 +651,6 @@ const Graph = (() => {
     if (pinned) pins.set(n.id, { x: Math.round(n.x), y: Math.round(n.y) });
     else pins.delete(n.id);
     alpha = Math.max(alpha, 0.35); // let the other notes settle around it
-    untangleBudget = 600;
     savePins();
   }
 
@@ -636,7 +682,7 @@ const Graph = (() => {
   function updateStats() {
     const el = document.getElementById('graph-stats');
     const placed = nodes.filter((n) => n.pinned).length;
-    el.textContent = `${nodes.filter((n) => !n.unresolved).length} notes · ${edges.length} links${placed ? ` · ${placed} placed` : ''} · drag a note to place it, right-click to let it float, scroll to zoom, click to open`;
+    el.textContent = `${nodes.filter((n) => !n.unresolved).length} notes · ${edges.length} links${placed ? ` · ${placed} placed` : ''} · drag to move, right-click → Keep it here to pin, scroll to zoom, click to open`;
   }
 
   return {
@@ -651,9 +697,7 @@ const Graph = (() => {
       rebuild();
       updateStats();
       if (fresh || settings.local) {
-        // Work out the layout up front (within ~150 ms) so the graph opens settled instead of wriggling into place
-        const until = performance.now() + 300;
-        while ((alpha > 0.01 || (crossings && untangleBudget > 0)) && performance.now() < until) tick();
+        findCleanLayout(); // try many starts and keep the one with no crossing lines
         fitPending = true;
       }
       if (visible) return;
@@ -680,7 +724,7 @@ const Graph = (() => {
       return {
         nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), below: n.below, pinned: !!n.pinned, group: n.group?.name || null })),
         edges: edges.map(([p, q]) => [p.id, q.id]),
-        crossings,
+        crossings: countCrossings(),
       };
     },
     // Label of the note under a point on screen, if any
@@ -697,6 +741,7 @@ const Graph = (() => {
     reset(placed = {}) {
       positions.clear();
       pins.clear();
+      held.clear();
       for (const [id, p] of Object.entries(placed)) pins.set(id, p);
       hover = null;
       fitPending = true;
