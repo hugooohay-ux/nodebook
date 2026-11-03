@@ -553,8 +553,23 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; poin
 .menu li:hover { background: var(--bg-hover); }
 .menu li.danger { color: var(--danger); }
 
+/* ---------- names you can edit in place ---------- */
+#vault-grid .card-name, #vh-title, .vh-name { cursor: text; }
+#vault-grid .card-name { margin-left: -4px; padding: 0 4px; border-radius: 4px; }
+#vault-grid .card-name:hover:not(.editing) { background: var(--bg-hover); }
+.editing {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+  background: var(--page) !important;
+  color: var(--text);
+  text-overflow: clip !important;
+  cursor: text;
+}
+.vault-pill > span.editing { padding: 0 4px; }
+
 /* ---------- "you are in a vault" markers ---------- */
-.vault-icon { width: 1.15em; height: 1.15em; flex-shrink: 0; fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+.vault-icon { width: 1.15em; height: 1.15em; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
 .vault-pill {
   display: inline-flex;
   align-items: center;
@@ -576,19 +591,9 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; poin
 
 .vault-hero { background: var(--bg-side); }
 .hero-inner { display: flex; align-items: center; gap: 18px; padding-top: 26px; padding-bottom: 6px; }
-.hero-icon {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  background: var(--accent-soft);
-  font-size: 34px;
-}
-.hero-icon .vault-icon { fill: var(--page); }
 .hero-text { flex: 1; min-width: 0; }
-.hero-kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.hero-kicker { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.hero-kicker .vault-icon { width: 14px; height: 14px; }
 #vh-title {
   margin: 2px 0 2px -6px;
   padding: 0 6px;
@@ -699,7 +704,6 @@ canvas.tpl-thumb { display: block; padding: 0; }
   .doc-mini { transform: scale(.17); }
   .vh-name { max-width: 40vw; font-size: 14px; }
   .hero-inner { gap: 12px; padding-top: 18px; }
-  .hero-icon { width: 48px; height: 48px; font-size: 26px; border-radius: 12px; }
   #vh-title { font-size: 22px; }
   .hero-back { display: none; }
   #vault-home .home-bar .icon:not(.theme-toggle):not(#vh-more) { display: none; }

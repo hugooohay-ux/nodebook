@@ -648,14 +648,18 @@ $('#vh-new').addEventListener('click', newNote);
 document.querySelectorAll('.view-toggle button').forEach((b) =>
   b.addEventListener('click', () => { location.hash = b.dataset.view === 'graph' ? `${vaultHash()}/graph` : vaultHash(); })
 );
-async function renameVault() {
-  const name = prompt('Rename vault', state.vault.name)?.trim();
-  if (!name || name === state.vault.name) return;
-  await api.renameVault(state.vault.id, name);
-  setVaultName(name);
+// Rename the vault by editing its name in place (`el` is the name text that becomes editable)
+function renameVault(el = state.view === 'graph' ? $('#vh-name > span') : $('#vh-title')) {
+  inlineEdit(el, {
+    value: state.vault.name,
+    onSave: async (name) => {
+      await api.renameVault(state.vault.id, name);
+      setVaultName(name);
+    },
+  });
 }
-$('#vh-name').addEventListener('click', renameVault);
-$('#vh-title').addEventListener('click', renameVault);
+$('#vh-name').addEventListener('click', () => renameVault($('#vh-name > span')));
+$('#vh-title').addEventListener('click', () => renameVault($('#vh-title')));
 
 // ⋮ next to the vault name: rename / export / delete this vault
 $('#vh-more').addEventListener('click', (e) => {

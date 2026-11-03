@@ -101,7 +101,7 @@ const Home = (() => {
           <canvas class="thumb"></canvas>
           <div class="card-info">
             <div class="card-text">
-              <div class="card-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</div>
+              <div class="card-name" title="Click to rename">${escapeHtml(v.name)}</div>
               <div class="card-meta"><span class="card-icon"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg></span>${v.notes.length} note${v.notes.length === 1 ? '' : 's'} · Opened ${opened(v.opened)}</div>
             </div>
             <button class="card-more icon" title="Rename, export or delete">⋮</button>
@@ -130,14 +130,26 @@ const Home = (() => {
     menuFor = null;
   }
 
+  // Edit a vault card's name right on the card
+  function renameInPlace(id) {
+    const v = vaults.find((x) => x.id === id);
+    const el = document.querySelector(`.vault-card[data-id="${id}"] .card-name`);
+    if (!v || !el) return;
+    inlineEdit(el, {
+      value: v.name,
+      onSave: async (name) => {
+        await api.renameVault(id, name);
+        v.name = name;
+      },
+    });
+  }
+
   async function menuAction(act, id) {
     const v = vaults.find((x) => x.id === id);
     if (!v) return;
     if (act === 'open') open(id);
-    else if (act === 'rename') {
-      const name = prompt('Rename vault', v.name)?.trim();
-      if (name && name !== v.name) { await api.renameVault(id, name); refresh(); }
-    } else if (act === 'export') api.exportVault(id);
+    else if (act === 'rename') renameInPlace(id);
+    else if (act === 'export') api.exportVault(id);
     else if (act === 'delete') {
       if (confirm(`Delete "${v.name}" and its ${v.notes.length} notes? This can't be undone — export it first if you want a backup.`)) {
         await api.deleteVault(id);
@@ -165,6 +177,11 @@ const Home = (() => {
       e.stopPropagation();
       const r = e.target.getBoundingClientRect();
       return openMenu(card.dataset.id, r.left, r.bottom + 4);
+    }
+    // Clicking the name renames the vault; clicking anywhere else on the card opens it
+    if (e.target.closest('.card-name')) {
+      if (!e.target.isContentEditable) renameInPlace(card.dataset.id);
+      return;
     }
     open(card.dataset.id);
   });
