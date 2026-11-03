@@ -121,7 +121,10 @@ const Home = (() => {
   const open = (id) => { location.hash = '#/v/' + id; };
 
   async function create(template) {
-    const id = await api.createVault(template === 'starter' ? 'Getting started' : 'Untitled vault', template);
+    const ex = window.EXAMPLE_VAULT;
+    const id = template === 'example' && ex
+      ? await api.createVault(ex.name, 'blank', ex.notes, ex.groups)
+      : await api.createVault(template === 'starter' ? 'Getting started' : 'Untitled vault', template);
     open(id);
   }
 

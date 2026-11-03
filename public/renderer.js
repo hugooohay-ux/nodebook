@@ -254,6 +254,7 @@ async function saveGroups() {
 
 // Everything that shows group colours
 function renderGroups() {
+  renderFileList(); // folders in the notes panel
   renderGroupChip();
   renderGroupLegend();
   if (state.view === 'docs') renderNoteGrid();
@@ -533,7 +534,8 @@ function toast(msg) {
   }, 1800);
 }
 
-async function newNote() {
+// `folder`: id of the folder (group) to put it in
+async function newNote(folder = null) {
   if (!state.vault) return;
   let name = 'Untitled';
   for (let i = 1; resolve(name); i++) name = `Untitled ${i}`;
@@ -541,6 +543,11 @@ async function newNote() {
   await api.createNote(path, '');
   state.notes.set(path, { path, name, content: '', mtime: Date.now() });
   rebuildIndex();
+  if (typeof folder === 'string' && groupById(folder)) {
+    state.groups.members[path] = folder;
+    setFolderClosed(folder, false);
+    await api.saveGroups(state.groups);
+  }
   renderFileList();
   await openNote(path);
   setMode('edit');
@@ -653,13 +660,44 @@ function renderPreview() {
   $('#preview .page').innerHTML = marked.parse(md);
 }
 
+// Folders in the notes panel are the vault's groups: a note in a folder gets that group's colour in the graph
+const collapsedKey = () => `nodebook:folders-closed:${state.vault?.id}`;
+function closedFolders() {
+  try { return new Set(JSON.parse(localStorage.getItem(collapsedKey()) || '[]')); } catch { return new Set(); }
+}
+function setFolderClosed(id, closed) {
+  const s = closedFolders();
+  if (closed) s.add(id); else s.delete(id);
+  try { localStorage.setItem(collapsedKey(), JSON.stringify([...s])); } catch { /* private mode */ }
+}
+
+function noteItem(n, snippet, inFolder) {
+  const li = document.createElement('li');
+  li.className = 'note' + (inFolder ? ' in-folder' : '');
+  li.dataset.path = n.path;
+  li.title = n.path;
+  li.draggable = true;
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = n.name;
+  li.appendChild(name);
+  if (snippet) {
+    const s = document.createElement('span');
+    s.className = 'snippet';
+    s.textContent = '…' + snippet;
+    li.classList.add('has-snippet');
+    li.appendChild(s);
+  }
+  return li;
+}
+
 function renderFileList() {
   const q = $('#search').value.trim().toLowerCase();
   const ul = $('#file-list');
   ul.innerHTML = '';
-  const notes = [...state.notes.values()].sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
-  let lastDir = '';
-  for (const n of notes) {
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  const matches = [];
+  for (const n of state.notes.values()) {
     let snippet = '';
     if (q) {
       const inName = n.name.toLowerCase().includes(q);
@@ -667,34 +705,84 @@ function renderFileList() {
       if (!inName && idx < 0) continue;
       if (!inName) snippet = n.content.slice(Math.max(0, idx - 20), idx + 60).replace(/\s+/g, ' ');
     }
-    const dir = dirOf(n.path);
-    if (dir !== lastDir && dir) {
-      const f = document.createElement('li');
-      f.className = 'folder';
-      f.textContent = dir.slice(0, -1);
-      ul.appendChild(f);
-    }
-    lastDir = dir;
-    const li = document.createElement('li');
-    li.className = 'note';
-    li.dataset.path = n.path;
-    li.title = n.path;
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = n.name;
-    li.appendChild(name);
-    if (dir) li.style.paddingLeft = '20px';
-    if (snippet) {
-      const s = document.createElement('span');
-      s.className = 'snippet';
-      s.textContent = '…' + snippet;
-      li.classList.add('has-snippet');
-      li.appendChild(s);
-    }
-    ul.appendChild(li);
+    matches.push({ n, snippet });
   }
+  matches.sort((a, b) => byName(a.n, b.n));
+  const closed = closedFolders();
+  const folders = [...state.groups.list].sort(byName);
+  for (const g of folders) {
+    const inside = matches.filter((m) => state.groups.members[m.n.path] === g.id);
+    if (q && !inside.length) continue; // while searching, only folders with hits
+    const open = q || !closed.has(g.id) || inside.some((m) => m.n.path === state.current);
+    const f = document.createElement('li');
+    f.className = 'folder' + (open ? ' open' : '');
+    f.dataset.group = g.id;
+    f.style.setProperty('--sw', g.color);
+    f.innerHTML = `<span class="chev" aria-hidden="true"></span><span class="ficon" aria-hidden="true"></span>
+      <span class="name">${escapeHtml(g.name)}</span><span class="count">${inside.length}</span>
+      <button class="f-add icon" title="New note in this folder">＋</button>
+      <button class="f-more icon" title="Folder options">⋯</button>`;
+    ul.appendChild(f);
+    if (open) for (const m of inside) ul.appendChild(noteItem(m.n, m.snippet, true));
+  }
+  const loose = matches.filter((m) => !groupById(state.groups.members[m.n.path]));
+  if (folders.length && loose.length) {
+    const h = document.createElement('li');
+    h.className = 'loose-head';
+    h.textContent = 'Not in a folder';
+    ul.appendChild(h);
+  }
+  for (const m of loose) ul.appendChild(noteItem(m.n, m.snippet, false));
   highlightActive();
 }
+
+async function newFolder() {
+  const name = await Dialog.prompt('New folder', '', { message: 'Notes in a folder share its colour in the graph.', okLabel: 'Create' });
+  if (typeof name !== 'string' || !name.trim()) return;
+  const g = state.groups.list.find((x) => x.name.toLowerCase() === name.trim().toLowerCase()) || createGroup(name.trim());
+  setFolderClosed(g.id, false);
+  await saveGroups();
+  return g;
+}
+
+// Folder options: rename, change colour, delete
+let folderMenu = null;
+function closeFolderMenu() { folderMenu?.remove(); folderMenu = null; }
+function openFolderMenu(g, x, y) {
+  closeFolderMenu();
+  folderMenu = document.createElement('ul');
+  folderMenu.className = 'menu folder-menu';
+  folderMenu.innerHTML = `<li data-act="new">New note here</li><li data-act="rename">Rename</li>
+    <li data-act="color"><span class="swatch" style="--sw:${g.color}"></span>Change colour</li>
+    <li class="sep"></li><li data-act="delete" class="danger">Delete folder</li>`;
+  document.body.appendChild(folderMenu);
+  folderMenu.style.left = Math.min(x, innerWidth - folderMenu.offsetWidth - 8) + 'px';
+  folderMenu.style.top = Math.min(y, innerHeight - folderMenu.offsetHeight - 8) + 'px';
+  folderMenu.addEventListener('click', async (e) => {
+    const act = e.target.closest('li[data-act]')?.dataset.act;
+    if (!act) return;
+    closeFolderMenu();
+    if (act === 'new') return newNote(g.id);
+    if (act === 'color') {
+      g.color = GROUP_COLORS[(GROUP_COLORS.indexOf(g.color) + 1) % GROUP_COLORS.length];
+      await saveGroups();
+      return renderFileList();
+    }
+    if (act === 'rename') {
+      const el = $(`#file-list li.folder[data-group="${g.id}"] .name`);
+      if (el) inlineEdit(el, { value: g.name, onSave: async (name) => { g.name = name; await saveGroups(); renderFileList(); } });
+      return;
+    }
+    const ok = await Dialog.confirm(`The notes in “${g.name}” are kept; they just move out of the folder.`, { title: 'Delete folder?', okLabel: 'Delete', danger: true });
+    if (!ok) return;
+    state.groups.list = state.groups.list.filter((x) => x !== g);
+    await saveGroups();
+    renderFileList();
+  });
+}
+document.addEventListener('pointerdown', (e) => {
+  if (folderMenu && !e.target.closest('.folder-menu')) closeFolderMenu();
+});
 
 function highlightActive() {
   document.querySelectorAll('#file-list li.note').forEach((li) => li.classList.toggle('active', li.dataset.path === state.current));
@@ -922,9 +1010,76 @@ $('#preview').addEventListener('click', (e) => {
 });
 
 $('#file-list').addEventListener('click', (e) => {
+  const folder = e.target.closest('li.folder');
+  if (folder) {
+    e.stopImmediatePropagation(); // keep the slide-out panel open on phones
+    const g = groupById(folder.dataset.group);
+    if (!g || e.target.isContentEditable) return;
+    if (e.target.closest('.f-add')) return newNote(g.id);
+    if (e.target.closest('.f-more')) {
+      const r = e.target.getBoundingClientRect();
+      return openFolderMenu(g, r.left, r.bottom + 4);
+    }
+    setFolderClosed(g.id, folder.classList.contains('open'));
+    return renderFileList();
+  }
   const li = e.target.closest('li.note');
   if (li) openNote(li.dataset.path);
 });
+// Right-click: a note → choose its folder; a folder → its options
+$('#file-list').addEventListener('contextmenu', (e) => {
+  const folder = e.target.closest('li.folder');
+  const note = e.target.closest('li.note');
+  if (!folder && !note) return;
+  e.preventDefault();
+  if (folder) openFolderMenu(groupById(folder.dataset.group), e.clientX, e.clientY);
+  else openGroupMenu(note.dataset.path, e.clientX, e.clientY);
+});
+// Drag a note onto a folder (or a note in it) to put it there; anywhere else in the list takes it out.
+let draggedNote = null;
+function dropTarget(e) {
+  const li = e.target.closest('#file-list li');
+  if (li?.matches('li.folder')) return li;
+  if (li?.matches('li.note.in-folder')) return findFolderRow(li);
+  return $('#file-list');
+}
+$('#file-list').addEventListener('dragstart', (e) => {
+  const li = e.target.closest('li.note');
+  if (!li) return;
+  draggedNote = li.dataset.path;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', nameOf(draggedNote));
+});
+$('#file-list').addEventListener('dragover', (e) => {
+  if (!draggedNote) return;
+  const t = dropTarget(e);
+  document.querySelectorAll('#file-list .drop-here, #file-list.drop-here').forEach((x) => x.classList.remove('drop-here'));
+  e.preventDefault();
+  t.classList.add('drop-here');
+});
+function findFolderRow(li) {
+  let x = li;
+  while (x && !x.matches('li.folder')) x = x.previousElementSibling;
+  return x;
+}
+$('#file-list').addEventListener('drop', async (e) => {
+  if (!draggedNote) return;
+  e.preventDefault();
+  const t = dropTarget(e);
+  const path = draggedNote;
+  draggedNote = null;
+  const id = t.matches('li.folder') ? t.dataset.group : null;
+  if ((state.groups.members[path] || null) === id) return renderFileList();
+  if (id) setFolderClosed(id, false);
+  await setGroup(path, id);
+  const g = groupById(id);
+  toast(g ? `“${nameOf(path)}” moved to ${g.name}` : `“${nameOf(path)}” is no longer in a folder`);
+});
+$('#file-list').addEventListener('dragend', () => {
+  draggedNote = null;
+  document.querySelectorAll('#file-list .drop-here, #file-list.drop-here').forEach((x) => x.classList.remove('drop-here'));
+});
+$('#btn-new-folder').addEventListener('click', newFolder);
 $('#rightbar').addEventListener('click', (e) => {
   const li = e.target.closest('li');
   if (!li) return;

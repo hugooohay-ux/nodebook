@@ -268,12 +268,19 @@ const Graph = (() => {
     const c = [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
     return [0, 1, 2, 3].some((i) => segmentsCross(p, q, c[i], c[(i + 1) % 4]));
   }
+  // Sweep from left to right so only lines whose boxes overlap get the exact test (fast for big vaults)
   function countCrossings() {
+    const boxes = edges.map(([p, q]) => ({ p, q, x0: Math.min(p.x, q.x), x1: Math.max(p.x, q.x), y0: Math.min(p.y, q.y), y1: Math.max(p.y, q.y) }));
+    boxes.sort((a, b) => a.x0 - b.x0);
     let k = 0;
-    for (let i = 0; i < edges.length; i++) {
-      for (let j = i + 1; j < edges.length; j++) {
-        const [p, q] = edges[i];
-        const [r, s] = edges[j];
+    for (let i = 0; i < boxes.length; i++) {
+      const A = boxes[i];
+      for (let j = i + 1; j < boxes.length; j++) {
+        const B = boxes[j];
+        if (B.x0 > A.x1) break;
+        if (B.y0 > A.y1 || B.y1 < A.y0) continue;
+        const { p, q } = A;
+        const { p: r, q: s } = B;
         if (p !== r && p !== s && q !== r && q !== s && segmentsCross(p, q, r, s)) k++;
       }
     }
@@ -285,16 +292,24 @@ const Graph = (() => {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
       const len2 = dx * dx + dy * dy || 1;
+      const x0 = Math.min(p.x, q.x);
+      const x1 = Math.max(p.x, q.x);
+      const y0 = Math.min(p.y, q.y);
+      const y1 = Math.max(p.y, q.y);
       for (const m of nodes) {
         if (m === p || m === q) continue;
+        const reach = radius(m) + 10;
+        if (m.x + reach < x0 || m.x - reach > x1 || m.y + reach < y0 || m.y - reach > y1) continue; // nowhere near
         const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
         if (t <= 0 || t >= 1) continue;
         // the note itself
-        if (Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 10) lineThroughNote++;
+        if (Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < reach) lineThroughNote++;
       }
       // …and its label, drawn below it
       for (const m of nodes) {
         if (m === p || m === q) continue;
+        const reach = m.labelW / 2 + 4;
+        if (m.x + reach < x0 || m.x - reach > x1 || m.y + radius(m) + 17 < y0 || m.y > y1) continue; // nowhere near
         const half = m.labelW / 2 + 4;
         const top = m.y + radius(m) + 2;
         if (segmentHitsBox(p, q, { x0: m.x - half, x1: m.x + half, y0: top, y1: top + 15 })) lineThroughNote++;
@@ -331,7 +346,8 @@ const Graph = (() => {
       const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
       for (const n of free) Object.assign(n, { x: cx + (rand() - 0.5) * spread, y: cy + (rand() - 0.5) * spread, vx: 0, vy: 0 });
       alpha = 1;
-      for (let i = 0; i < 400 && alpha > 0.005; i++) tick();
+      // the first try always settles fully; later ones stop when time is up
+      for (let i = 0; i < 400 && alpha > 0.005 && (seed === 1 || performance.now() < until); i++) tick();
       const score = repairScore();
       if (score < bestScore) {
         bestScore = score;
@@ -442,7 +458,7 @@ const Graph = (() => {
   // go and let them glide there, so the graph untangles while you're still moving instead of after
   function liveTidy() {
     const now = performance.now();
-    if (now - lastLive < 120) return;
+    if (now - lastLive < (nodes.length > 60 ? 250 : 120)) return; // less often in big vaults so dragging stays fluid
     lastLive = now;
     if (!overlaps()) return; // keep any glides already under way; nothing new to fix
     const snap = snapshot();
@@ -476,7 +492,8 @@ const Graph = (() => {
     alpha = 0;
     let swings = improve(120);
     const scoreA = repairScore();
-    if (untidiness() > 0.5) {
+    // B is only worth it for smaller vaults: in a big one a fresh layout is slow and loses the shape you made
+    if (nodes.length <= 60 && untidiness() > 0.5) {
       const posA = snapshot();
       searchLayout(160);
       const swingsB = improve(90);
@@ -502,7 +519,7 @@ const Graph = (() => {
     // End notes first; only if that isn't enough, notes with more links
     for (const maxLinks of [1, 2, 3, Infinity]) {
       let improved = true;
-      while (!clean() && improved && performance.now() < until) {
+      while (performance.now() < until && improved && !clean()) {
         improved = false;
         for (const n of troubleNotes(minimal).filter((t) => t.deg <= maxLinks)) {
           // Its end notes (linked only to it) move along with it, keeping the branch together
@@ -530,6 +547,7 @@ const Graph = (() => {
             for (const d of [10, 20, 30, 45, 60, 80, 100]) for (const sgn of [1, -1]) spots.push([r0, now + (sgn * d * Math.PI) / 180]);
             for (const r of [r0, settings.dist, settings.dist * 1.6, r0 * 1.4]) for (let k = 0; k < 16; k++) spots.push([r, (k / 16) * Math.PI * 2]);
             for (const [r, a] of spots) {
+              if (performance.now() > until) break; // big vaults: stop on time, keep the best spot so far
               moveTo(anchor.x + r * Math.cos(a), anchor.y + r * Math.sin(a));
               const s = evaluate() + Math.hypot(n.x - ox, n.y - oy) * moveCost * (1 + tagAlong.length);
               if (s < best - 0.5) {

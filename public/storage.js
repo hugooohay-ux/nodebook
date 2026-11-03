@@ -105,12 +105,12 @@ See also: [[Welcome]], [[Linking notes]].
     return out;
   }
 
-  async function createVault(name, template = 'blank', notes = null) {
+  async function createVault(name, template = 'blank', notes = null, groups = null) {
     const id = newId();
     const now = Date.now();
     const files = notes || Object.entries(TEMPLATES[template] || {}).map(([path, content]) => ({ path, content }));
     await tx('readwrite', (s) => {
-      s.vaults.put({ id, name: name || 'Untitled vault', created: now, opened: now });
+      s.vaults.put({ id, name: name || 'Untitled vault', created: now, opened: now, ...(groups ? { groups } : {}) });
       for (const n of files) s.notes.put({ vault: id, path: n.path, content: n.content, mtime: now });
     });
     changed(id);

@@ -31,6 +31,10 @@
             <span class="tpl-thumb starter"></span>
             <span class="tpl-name">Getting started</span>
           </button>
+          <button class="template" data-template="example">
+            <span class="tpl-thumb example"></span>
+            <span class="tpl-name">Example: Astronomy</span>
+          </button>
         </div>
       </div>
     </section>
@@ -208,6 +212,7 @@
         <div class="panel-head">
           <button id="btn-collapse" class="icon" title="Hide notes panel">←</button>
           <span id="panel-vault" class="panel-vault" title="Notes in this vault"><svg class="vault-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg><span></span></span>
+          <button id="btn-new-folder" class="icon" title="New folder"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 6.2A1.7 1.7 0 0 1 4.2 4.5H7.6l1.6 1.8h6.6a1.7 1.7 0 0 1 1.7 1.7v6.8a1.7 1.7 0 0 1-1.7 1.7H4.2a1.7 1.7 0 0 1-1.7-1.7zM10 9v4.4M7.8 11.2h4.4"/></svg></button>
           <button id="btn-new" class="icon" title="New note (Alt+N)">＋</button>
         </div>
         <input id="search" type="search" placeholder="Search notes…  Ctrl+P">
@@ -251,6 +256,7 @@
   <script src="vendor/jszip.min.js"></script>
   <script src="vendor/editor.js"></script>
   <script src="dialog.js"></script>
+  <script src="example-vault.js"></script>
   <script src="storage.js"></script>
   <script src="inline-edit.js"></script>
   <script src="graph.js"></script>

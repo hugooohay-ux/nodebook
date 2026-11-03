@@ -32,8 +32,11 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
   Right-click to let it float again, or "Unpin all". Notes are kept off lines that aren't theirs, and lines
   stop at the edge of each note.
-- Coloured groups: put notes in a named group (right-click in the graph, or the chip on a note) to colour them;
-  groups can pull their notes together. Manage colours/names in the graph panel.
+- Folders in the notes panel: make one with the folder button, drag notes into it (or right-click a note),
+  collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:
+  its notes share its colour in the graph and can be pulled together. Groups can also be set from the graph
+  (right-click a note) or the chip on a note, and managed in the graph panel.
+- "Example: Astronomy" template on the home screen: about 100 linked notes in 6 folders, to try everything out
 - Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter
