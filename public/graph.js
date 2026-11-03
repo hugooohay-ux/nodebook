@@ -238,7 +238,7 @@ const Graph = (() => {
     alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0);
   }
 
-  // Held notes don't move: the one being dragged, pinned ones, and ones you've dropped somewhere this session
+  // Held notes don't move: the one being dragged, pinned ones, and the one you dropped last
   const isHeld = (p) => (drag && drag.node === p) || p.pinned || held.has(p.id);
 
   // ---------- choosing a clean starting layout ----------
@@ -325,8 +325,6 @@ const Graph = (() => {
   // When lines cross (or run through notes, or labels overlap), move the notes involved — not held or pinned
   // ones — to another spot around the note they're linked to, e.g. swing a note's children round to its other
   // side. Each move is kept only if it makes things cleaner; repeat until nothing overlaps.
-  let repairPending = false;
-
   function troubleNotes() {
     const out = new Set();
     for (let i = 0; i < edges.length; i++) {
@@ -357,9 +355,24 @@ const Graph = (() => {
     return messiness() + stretch * 2;
   }
 
-  function repair(budgetMs = 300) {
+  // After a change (a drop, a slider): work out the settled, repaired layout right away, then animate
+  // everything from where it is now to where it ends up, in one smooth movement
+  function settleAndTidy() {
+    for (const n of nodes) {
+      if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
+    }
+    const from = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    alpha = Math.max(alpha, 0.3);
+    const until = performance.now() + 150;
+    while (alpha > 0.005 && performance.now() < until) tick();
+    alpha = 0;
+    repair(300, from);
+  }
+
+  function repair(budgetMs = 300, from = null) {
     const until = performance.now() + budgetMs;
-    const start = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    const start = from || new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
     const free = (n) => !n.pinned && !held.has(n.id);
     let score = repairScore();
     const clean = () => countCrossings() === 0 && messiness() === 0;
@@ -383,6 +396,7 @@ const Graph = (() => {
             for (const m of tagAlong) { m.x += dx; m.y += dy; }
           };
           let bestPos = null;
+          let bestAnchor = null;
           let best = score;
           // Try spots around each note it links to: many angles, at its current distance and a bit further out
           for (const anchor of anchors) {
@@ -396,6 +410,7 @@ const Graph = (() => {
                 if (s < best - 0.5) {
                   best = s;
                   bestPos = [n.x, n.y];
+                  bestAnchor = anchor;
                 }
               }
             }
@@ -403,6 +418,8 @@ const Graph = (() => {
           moveTo(ox, oy);
           if (bestPos) {
             moveTo(...bestPos);
+            swingsAround.set(n.id, bestAnchor.id);
+            for (const m of tagAlong) swingsAround.set(m.id, n.id); // its end notes ride along with it
             score = repairScore();
             improved = true;
           }
@@ -411,33 +428,78 @@ const Graph = (() => {
       }
       if (clean()) break;
     }
-    // Glide moved notes from where they were to their new spots
-    for (const n of nodes) {
+    // Animate: each moved note swings round the note it's attached to (along an arc, not a straight line),
+    // a parent's branch rides along with it, and notes further out the tree start a little later
+    const now = performance.now();
+    const moved = nodes.filter((n) => {
       const [sx, sy] = start.get(n.id);
-      if (Math.hypot(n.x - sx, n.y - sy) > 0.5) {
-        n.goal = [n.x, n.y];
-        n.x = sx;
-        n.y = sy;
+      return Math.hypot(n.x - sx, n.y - sy) > 0.5;
+    });
+    const isMoving = new Set(moved.map((n) => n.id));
+    const stepsOut = (n) => {
+      // how many moving notes it hangs off (for the stagger); guards against loops
+      let k = 0;
+      const seen = new Set([n.id]);
+      for (let id = swingsAround.get(n.id); id && isMoving.has(id) && !seen.has(id); id = swingsAround.get(id)) {
+        seen.add(id);
+        k++;
       }
+      return k;
+    };
+    // Notes that moved only because the graph settled swing around their biggest linked note
+    for (const n of moved) {
+      if (swingsAround.has(n.id)) continue;
+      const parent = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && (m.size > n.size || (m.size === n.size && m.deg > n.deg))).sort((a, b) => b.size - a.size)[0];
+      if (parent) swingsAround.set(n.id, parent.id);
     }
+    const end = new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
+    for (const n of moved) {
+      const [sx, sy] = start.get(n.id);
+      const [gx, gy] = end.get(n.id);
+      const anchor = byId.get(swingsAround.get(n.id)) || null;
+      const anim = { sx, sy, gx, gy, t0: now + stepsOut(n) * 120, dur: 750, anchor };
+      if (anchor) {
+        const [asx, asy] = start.get(anchor.id);
+        const [agx, agy] = end.get(anchor.id);
+        anim.r0 = Math.hypot(sx - asx, sy - asy);
+        anim.a0 = Math.atan2(sy - asy, sx - asx);
+        anim.r1 = Math.hypot(gx - agx, gy - agy);
+        anim.a1 = Math.atan2(gy - agy, gx - agx);
+      }
+      n.anim = anim;
+    }
+    for (const n of moved) [n.x, n.y] = start.get(n.id);
   }
 
-  // Move notes a step towards their repaired spots; returns true while any are still on the way
-  function glide() {
-    let busy = false;
-    for (const n of nodes) {
-      if (!n.goal) continue;
-      const [gx, gy] = n.goal;
-      n.x += (gx - n.x) * 0.2;
-      n.y += (gy - n.y) * 0.2;
-      if (Math.hypot(gx - n.x, gy - n.y) < 0.5) {
-        n.x = gx;
-        n.y = gy;
-        n.goal = null;
-      } else busy = true;
-      positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  // Where an animating note is this frame (its anchor may be moving too, so the branch follows it)
+  function animAt(n, now, stack = new Set()) {
+    const a = n.anim;
+    const e = easeInOut(Math.min(1, Math.max(0, (now - a.t0) / a.dur)));
+    if (a.anchor && a.r0 !== undefined && !stack.has(a.anchor.id)) {
+      stack.add(n.id);
+      const [ax, ay] = a.anchor.anim ? animAt(a.anchor, now, stack) : [a.anchor.x, a.anchor.y];
+      const turnBy = ((a.a1 - a.a0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI; // shortest way round
+      const angle = a.a0 + turnBy * e;
+      const r = a.r0 + (a.r1 - a.r0) * e;
+      return [ax + r * Math.cos(angle), ay + r * Math.sin(angle)];
     }
-    return busy;
+    return [a.sx + (a.gx - a.sx) * e, a.sy + (a.gy - a.sy) * e];
+  }
+
+  // Advance the repair animation by one frame; returns true while anything is still moving
+  function glide() {
+    const now = performance.now();
+    const next = new Map();
+    for (const n of nodes) if (n.anim) next.set(n, now >= n.anim.t0 + n.anim.dur ? [n.anim.gx, n.anim.gy] : animAt(n, now));
+    for (const [n, [x, y]] of next) {
+      n.x = x;
+      n.y = y;
+      if (now >= n.anim.t0 + n.anim.dur) n.anim = null;
+      positions.set(n.id, { x, y, vx: 0, vy: 0 });
+    }
+    return next.size > 0;
   }
   // ---------- drawing ----------
   // Every note keeps its usual size (by its own links); notes with more below them grow on top of that,
@@ -660,11 +722,6 @@ const Graph = (() => {
   function loop() {
     if (!visible) return;
     if (alpha > 0.003) tick();
-    else if (repairPending && !drag) {
-      // the graph has settled after a change: fix anything that now crosses or overlaps
-      repairPending = false;
-      repair();
-    }
     glide();
     if (fitPending && alpha < 0.3) { fit(); fitPending = false; }
     draw();
@@ -709,7 +766,7 @@ const Graph = (() => {
       drag = n ? { node: n } : { pan: true, sx: p.sx, sy: p.sy, cx: cam.x, cy: cam.y };
       if (n) {
         alpha = Math.max(alpha, 0.3);
-        for (const m of nodes) m.goal = null; // a new drag takes over from any repair still gliding
+        for (const m of nodes) m.anim = null; // a new drag takes over from any repair still animating
       }
     });
     window.addEventListener('pointermove', (e) => {
@@ -734,10 +791,16 @@ const Graph = (() => {
       const clicked = downAt && Math.hypot(p.sx - downAt.sx, p.sy - downAt.sy) < 4;
       if (drag.node && clicked) opts.onOpen(drag.node);
       else if (drag.node?.pinned) setPin(drag.node, true); // moved a pinned note: pin it at its new spot
-      else if (drag.node) held.add(drag.node.id); // let go: it stays where you dropped it (this session, no pin)
-      if (drag.node && !clicked) repairPending = true; // once things settle, move other notes so nothing crosses
+      else if (drag.node) {
+        // Let go: this note stays where you dropped it. Notes dropped earlier become movable again,
+        // so the repair has room to untangle things around it (pinned notes never move).
+        held.clear();
+        held.add(drag.node.id);
+      }
+      const dropped = drag.node && !clicked;
       drag = null;
       downAt = null;
+      if (dropped) settleAndTidy(); // the rest rearranges around it so nothing crosses, in one smooth movement
     });
     canvas.addEventListener('pointerleave', () => { if (!drag) hover = null; });
     // Right-click a note: open it, or let a placed note float again
@@ -773,7 +836,9 @@ const Graph = (() => {
     const sizeSlider = document.getElementById('g-size');
     if (sizeSlider) sizeSlider.value = settings.sizeMul;
     on('g-fit', 'click', fit);
-    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.4); });
+    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; settleAndTidy(); });
+    // Letting go of a slider tidies up too, so squeezing or spreading the graph never leaves lines crossing
+    for (const id of ['g-repel', 'g-dist', 'g-size']) on(id, 'change', () => settleAndTidy());
     on('g-unpin', 'click', () => {
       // Reset layout: drop pins and drags, then find a clean layout again
       pins.clear();
@@ -869,12 +934,17 @@ const Graph = (() => {
       repair();
     },
     // Current layout, read-only: notes with positions, and lines as pairs of note ids
+    // (positions are where notes end up, even if an animation is still carrying them there)
     layout() {
-      return {
-        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), below: n.below, pinned: !!n.pinned, group: n.group?.name || null })),
+      const now = nodes.map((n) => [n, n.x, n.y]);
+      for (const n of nodes) if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; }
+      const result = {
+        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), below: n.below, pinned: !!n.pinned, held: held.has(n.id), animating: !!n.anim, group: n.group?.name || null })),
         edges: edges.map(([p, q]) => [p.id, q.id]),
         crossings: countCrossings(),
       };
+      for (const [n, x, y] of now) { n.x = x; n.y = y; }
+      return result;
     },
     // Label of the note under a point on screen, if any
     noteAt(clientX, clientY) {
