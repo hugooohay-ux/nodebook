@@ -325,7 +325,7 @@ const Graph = (() => {
         if (Math.abs(p.x - q.x) < (p.labelW + q.labelW) / 2 + 6 && Math.abs(p.y + radius(p) - q.y - radius(q)) < 16) labelsOverlap++;
       }
     }
-    return countCrossings() * 1000 + stackedNotes() * 500 + lineThroughNote * 50 + labelsOverlap * 5;
+    return countCrossings() * 1000 + stackedNotes() * 500 + bunchedLines().length * 300 + labelsOnNotes().length * 50 + lineThroughNote * 50 + labelsOverlap * 5;
   }
   const snapshot = () => new Map(nodes.map((n) => [n.id, [n.x, n.y]]));
   const restore = (snap) => { for (const n of nodes) [n.x, n.y] = snap.get(n.id); };
@@ -382,9 +382,11 @@ const Graph = (() => {
       for (let j = i + 1; j < nodes.length; j++) {
         const p = nodes[i];
         const q = nodes[j];
-        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 8) { out.add(p); out.add(q); }
+        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 16) { out.add(p); out.add(q); }
       }
     }
+    for (const [a, b] of bunchedLines()) { out.add(a); out.add(b); }
+    for (const [a, b] of labelsOnNotes()) { out.add(a); out.add(b); }
     for (let i = 0; i < edges.length; i++) {
       for (let j = i + 1; j < edges.length; j++) {
         const [p, q] = edges[i];
@@ -435,15 +437,50 @@ const Graph = (() => {
       for (let j = i + 1; j < nodes.length; j++) {
         const p = nodes[i];
         const q = nodes[j];
-        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 8) k++;
+        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 16) k++;
       }
     }
     return k;
   }
 
-  // Overlaps: two lines crossing, a line running through a note, or notes on top of each other
+  // Two lines leaving the same note almost on top of each other (under ~10° apart): returns the pairs of
+  // far ends, e.g. [[Mars, Mercury]] when Inner planets' lines to them nearly coincide
+  function bunchedLines() {
+    const out = [];
+    for (const n of nodes) {
+      const ns = nbrsOf(n);
+      if (ns.length < 2) continue;
+      const angs = ns.map((m) => [Math.atan2(m.y - n.y, m.x - n.x), m]).sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < angs.length; i++) {
+        const j = (i + 1) % angs.length;
+        const gap = j ? angs[j][0] - angs[i][0] : angs[0][0] + 2 * Math.PI - angs[i][0];
+        if (gap < 0.18) out.push([angs[i][1], angs[j][1]]);
+      }
+    }
+    return out;
+  }
+
+  // A note's label (drawn under it) covering another note
+  function labelsOnNotes() {
+    const out = [];
+    for (const m of nodes) {
+      const half = m.labelW / 2;
+      const y0 = m.y + radius(m) + 2;
+      const y1 = y0 + 13;
+      for (const n of nodes) {
+        if (n === m) continue;
+        const cx = Math.max(m.x - half, Math.min(n.x, m.x + half));
+        const cy = Math.max(y0, Math.min(n.y, y1));
+        if (Math.hypot(n.x - cx, n.y - cy) < radius(n) + 2) out.push([m, n]);
+      }
+    }
+    return out;
+  }
+
+  // Overlaps: two lines crossing, a line running through a note, notes on top of (or squeezed against) each
+  // other, two lines almost on top of each other, or a label covering a note
   function overlaps() {
-    let k = countCrossings() + stackedNotes();
+    let k = countCrossings() + stackedNotes() + bunchedLines().length + labelsOnNotes().length;
     for (const [p, q] of edges) {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
@@ -474,6 +511,23 @@ const Graph = (() => {
   }
 
   const nbrsOf = (n) => [...n.nbrs].map((id) => byId.get(id)).filter(Boolean);
+
+  // The branch hanging off `anchor` through n: n plus everything reachable from it without going through
+  // the anchor. null if that's most of the graph or includes a note that must stay put.
+  function branchFrom(n, anchor) {
+    const seen = new Set([n]);
+    const stack = [n];
+    while (stack.length) {
+      const p = stack.pop();
+      for (const m of nbrsOf(p)) {
+        if (m === anchor || seen.has(m)) continue;
+        if (isHeld(m) || seen.size >= nodes.length / 2) return null;
+        seen.add(m);
+        stack.push(m);
+      }
+    }
+    return [...seen];
+  }
 
   // Notes up to `hops` links away from n (including n)
   function around(n, hops) {
@@ -595,7 +649,7 @@ const Graph = (() => {
     const continuing = guide.size > 0;
     guide.clear();
     alpha = 0; // stop exactly as it is
-    const swings = overlaps() ? improve(150, true) : new Map();
+    const swings = overlaps() ? improve(nodes.length > 60 ? 150 : 400, true) : new Map(); // small vaults: time to fix everything
     const region = dropped ? around(dropped, 2) : new Set(nodes);
     for (const [id, a] of polish(region, 90, from)) if (!swings.has(id)) swings.set(id, a);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
@@ -655,7 +709,45 @@ const Graph = (() => {
             }
           }
           moveTo(ox, oy);
-          if (bestPos) {
+          // Moving one note alone can't always fix it (e.g. two linked siblings on either side of a line).
+          // So also try swinging its whole branch — everything hanging off it on the far side of `anchor` —
+          // round the anchor as one rigid piece, which keeps the branch's own shape.
+          let bestTurn = null;
+          if (!bestPos || best > 0.5) {
+            for (const anchor of anchors) {
+              const branch = branchFrom(n, anchor);
+              if (!branch || branch.length < 2) continue;
+              const start = branch.map((m) => [m.x, m.y]);
+              const r0 = Math.hypot(ox - anchor.x, oy - anchor.y);
+              for (const deg of [20, -20, 40, -40, 60, -60, 90, -90, 120, -120, 150, -150, 180]) {
+                if (performance.now() > until) break;
+                const a = (deg * Math.PI) / 180;
+                const cos = Math.cos(a);
+                const sin = Math.sin(a);
+                branch.forEach((m, i) => {
+                  const dx = start[i][0] - anchor.x;
+                  const dy = start[i][1] - anchor.y;
+                  m.x = anchor.x + dx * cos - dy * sin;
+                  m.y = anchor.y + dx * sin + dy * cos;
+                });
+                // cost of the swing: how far the branch's root travels, a bit more for bigger branches
+                const s = evaluate() + r0 * Math.abs(a) * moveCost * (1 + Math.sqrt(branch.length) / 2);
+                if (s < best - 0.5) {
+                  best = s;
+                  bestTurn = { branch, pos: branch.map((m) => [m.x, m.y]), anchor };
+                }
+              }
+              branch.forEach((m, i) => { [m.x, m.y] = start[i]; });
+            }
+          }
+          if (bestTurn) {
+            bestTurn.branch.forEach((m, i) => {
+              [m.x, m.y] = bestTurn.pos[i];
+              swingsAround.set(m.id, bestTurn.anchor.id); // the whole branch swings round the anchor together
+            });
+            score = evaluate();
+            improved = true;
+          } else if (bestPos) {
             moveTo(...bestPos);
             swingsAround.set(n.id, bestAnchor.id);
             for (const m of tagAlong) swingsAround.set(m.id, n.id); // its end notes ride along with it
@@ -1188,6 +1280,17 @@ const Graph = (() => {
     },
     // Current layout, read-only: notes with positions, and lines as pairs of note ids
     // (positions are where notes end up, even if an animation is still carrying them there)
+    // What the repair currently counts as overlapping (for checking the layout from the console)
+    overlapReport() {
+      return {
+        total: overlaps(),
+        crossings: countCrossings(),
+        stacked: stackedNotes(),
+        bunched: bunchedLines().map(([a, b]) => `${a.label} / ${b.label}`),
+        labelsOnNotes: labelsOnNotes().map(([a, b]) => `${a.label} label on ${b.label}`),
+        trouble: troubleNotes(true).map((n) => n.label),
+      };
+    },
     layout() {
       const now = nodes.map((n) => [n, n.x, n.y]);
       for (const n of nodes) if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; }
