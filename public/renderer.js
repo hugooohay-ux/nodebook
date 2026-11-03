@@ -1,5 +1,5 @@
-/* global marked, Graph, Home, api */
-// `api` is exposed by storage.js
+/* global marked, Graph, Home, NoteEditor, api */
+// `api` is exposed by storage.js, `NoteEditor` by vendor/editor.js (built from src/editor.js)
 const $ = (s) => document.querySelector(s);
 
 const state = {
@@ -16,6 +16,16 @@ const state = {
 
 let saveTimer = null;
 let pendingSave = null;
+
+const editor = NoteEditor.create($('#editor'), {
+  placeholder: 'Start writing…  Type [[ to link a note, or press Ctrl+Enter on a word to turn it into one',
+  resolve: (target) => !!resolve(target),
+  noteNames: () => [...state.notes.values()].map((n) => n.name).filter((n) => n !== nameOf(state.current)),
+  onChange: () => scheduleSave(),
+  onOpenLink: (target) => openOrCreate(target),
+  onLinkWord: (r) => linkedWord(r),
+  onFormat: (f) => updateToolbar(f),
+});
 
 // ---------- helpers ----------
 const nameOf = (p) => p.split('/').pop().replace(/\.md$/i, '');
@@ -119,7 +129,7 @@ function showEmpty(msg) {
 function scheduleSave() {
   const note = state.notes.get(state.current);
   if (!note) return;
-  note.content = $('#editor').value;
+  note.content = editor.value;
   pendingSave = { path: note.path, content: note.content };
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 500);
@@ -132,6 +142,7 @@ async function flushSave() {
   pendingSave = null;
   await api.writeNote(path, content);
   rebuildIndex();
+  editor.refresh();
   renderSidePanel();
   if (state.view === 'graph') Graph.rebuild();
 }
@@ -149,8 +160,7 @@ async function openNote(path, { push = true } = {}) {
   setView('note');
   const note = state.notes.get(path);
   $('#title').value = note.name;
-  $('#editor').value = note.content;
-  $('#editor').scrollTop = 0;
+  editor.load(note.content);
   setMode(state.mode);
   renderSidePanel();
   highlightActive();
@@ -172,45 +182,54 @@ async function openOrCreate(target) {
   setMode('edit');
 }
 
-// Ctrl+Enter: turn the word at/just before the cursor (or the selection) into [[link]] and create that note
-const WORD_CH = /[\p{L}\p{N}_'-]/u;
-async function linkWordAtCursor() {
-  const ta = $('#editor');
-  const text = ta.value;
-  let start = ta.selectionStart;
-  let end = ta.selectionEnd;
-  const caret = end;
-  if (start === end) {
-    // Cursor inside a word, or after a word plus trailing spaces
-    if (!WORD_CH.test(text[end] || '') && !WORD_CH.test(text[end - 1] || '')) {
-      while (end > 0 && /[ \t]/.test(text[end - 1])) end--;
-    }
-    start = end;
-    while (start > 0 && WORD_CH.test(text[start - 1])) start--;
-    while (end < text.length && WORD_CH.test(text[end])) end++;
-  } else {
-    while (start < end && /\s/.test(text[start])) start++;
-    while (end > start && /\s/.test(text[end - 1])) end--;
-  }
-  const word = text.slice(start, end).replace(/^['-]+|['-]+$/g, '');
-  start += text.slice(start, end).indexOf(word);
-  end = start + word.length;
-  if (!word || /[[\]\n|#]/.test(word)) return toast('Put the cursor in or right after a word');
-  if (text.slice(start - 2, start) === '[[' && text.slice(end, end + 2) === ']]') return toast(`“${word}” is already a link`);
-
-  // execCommand keeps the edit on the native undo stack (Ctrl+Z works)
-  ta.focus();
-  ta.setSelectionRange(start, end);
-  document.execCommand('insertText', false, `[[${word}]]`);
-  const pos = caret > end ? caret + 4 : end + 4;
-  ta.setSelectionRange(pos, pos);
-  scheduleSave();
-
+// Ctrl+Enter / toolbar link button: the editor wrapped a word in [[ ]]; create the note if it's new
+async function linkedWord({ word, error }) {
+  if (error) return toast(error);
   if (resolve(word)) return toast(`Linked to “${word}”`);
   await createNoteNamed(word);
   await flushSave();
   toast(`Created note “${word}”`);
 }
+
+// ---------- formatting toolbar ----------
+const FONTS = { sans: 'var(--font)', serif: 'Georgia, "Times New Roman", serif', mono: 'var(--mono)' };
+const display = { font: 'sans', size: 16 };
+try { Object.assign(display, JSON.parse(localStorage.getItem('nodebook:display')) || {}); } catch { /* storage blocked */ }
+
+function applyDisplay() {
+  display.size = Math.min(28, Math.max(11, display.size));
+  document.documentElement.style.setProperty('--editor-font', FONTS[display.font] || FONTS.sans);
+  document.documentElement.style.setProperty('--editor-size', display.size + 'px');
+  $('#tb-font').value = display.font;
+  $('#tb-size').textContent = display.size;
+  try { localStorage.setItem('nodebook:display', JSON.stringify(display)); } catch { /* storage blocked */ }
+}
+
+function updateToolbar(f) {
+  document.querySelectorAll('#toolbar [data-cmd]').forEach((b) => b.classList.toggle('on', !!f[b.dataset.cmd]));
+  $('#tb-style').value = String(Math.min(f.heading, 3));
+}
+
+$('#toolbar').addEventListener('mousedown', (e) => {
+  // Keep focus (and the selection) in the editor while clicking toolbar buttons
+  if (e.target.closest('button')) e.preventDefault();
+});
+$('#toolbar').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.cmd) editor.exec(b.dataset.cmd);
+  else if (b.dataset.size) {
+    display.size += +b.dataset.size;
+    applyDisplay();
+  }
+});
+$('#tb-style').addEventListener('change', (e) => editor.exec('heading', +e.target.value));
+$('#tb-font').addEventListener('change', (e) => {
+  display.font = e.target.value;
+  applyDisplay();
+  editor.focus();
+});
+applyDisplay();
 
 let toastTimer = null;
 function toast(msg) {
@@ -282,8 +301,9 @@ async function renameCurrent() {
       await api.writeNote(n.path, updated);
     }
   }
-  $('#editor').value = state.notes.get(newPath).content;
+  editor.replace(state.notes.get(newPath).content);
   rebuildIndex();
+  editor.refresh();
   renderFileList();
   renderSidePanel();
   if (state.mode === 'preview') renderPreview();
@@ -325,8 +345,9 @@ function setMode(mode) {
   document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
   $('#editor').hidden = mode !== 'edit';
   $('#preview').hidden = mode !== 'preview';
+  document.body.classList.toggle('reading', mode === 'preview');
   if (mode === 'preview') renderPreview();
-  else $('#editor').focus();
+  else editor.focus();
 }
 
 function renderPreview() {
@@ -339,7 +360,7 @@ function renderPreview() {
       return `<a href="#" class="${cls}" data-target="${escapeHtml(target)}">${escapeHtml(alias || raw)}</a>`;
     })
   );
-  $('#preview').innerHTML = marked.parse(md);
+  $('#preview .page').innerHTML = marked.parse(md);
 }
 
 function renderFileList() {
@@ -442,122 +463,7 @@ function renderSidePanel() {
   $('#stats').textContent = state.vault ? `${state.notes.size} notes${cur ? ` · ${words} words` : ''}` : '';
 }
 
-// ---------- [[ autocomplete ----------
-const ac = { el: $('#ac'), items: [], sel: 0, start: 0, open: false };
-
-function caretCoords(ta, pos) {
-  const cs = getComputedStyle(ta);
-  const div = document.createElement('div');
-  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'tabSize']) div.style[p] = cs[p];
-  Object.assign(div.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', wordWrap: 'break-word', boxSizing: 'border-box', width: ta.clientWidth + 'px', top: '0', left: '0' });
-  div.textContent = ta.value.slice(0, pos);
-  const span = document.createElement('span');
-  span.textContent = '​';
-  div.appendChild(span);
-  document.body.appendChild(div);
-  const r = ta.getBoundingClientRect();
-  const out = { x: r.left + span.offsetLeft - ta.scrollLeft, y: r.top + span.offsetTop - ta.scrollTop + (parseFloat(cs.lineHeight) || 24) };
-  div.remove();
-  return out;
-}
-
-function updateAutocomplete() {
-  const ta = $('#editor');
-  const pos = ta.selectionStart;
-  const m = ta.value.slice(0, pos).match(/\[\[([^[\]\n|#]*)$/);
-  if (!m) return closeAutocomplete();
-  const q = m[1].toLowerCase();
-  const names = [...state.notes.values()].map((n) => n.name).filter((n) => n !== nameOf(state.current));
-  const items = names
-    .filter((n) => n.toLowerCase().includes(q))
-    .sort((a, b) => a.toLowerCase().indexOf(q) - b.toLowerCase().indexOf(q) || a.localeCompare(b))
-    .slice(0, 8)
-    .map((n) => ({ name: n }));
-  if (q && !names.some((n) => n.toLowerCase() === q)) items.push({ name: m[1].trim(), create: true });
-  if (!items.length) return closeAutocomplete();
-  ac.items = items;
-  ac.sel = Math.min(ac.sel, items.length - 1);
-  ac.start = pos - m[1].length;
-  ac.open = true;
-  ac.el.innerHTML = items
-    .map((it, i) => `<li data-i="${i}" class="${i === ac.sel ? 'sel' : ''}${it.create ? ' create' : ''}">${it.create ? 'Link new note: ' : ''}${escapeHtml(it.name)}</li>`)
-    .join('');
-  const c = caretCoords(ta, ac.start);
-  ac.el.hidden = false;
-  ac.el.style.left = Math.min(c.x, window.innerWidth - 380) + 'px';
-  ac.el.style.top = Math.min(c.y, window.innerHeight - ac.el.offsetHeight - 8) + 'px';
-}
-
-function closeAutocomplete() {
-  ac.open = false;
-  ac.sel = 0;
-  ac.el.hidden = true;
-}
-
-function acceptAutocomplete(i = ac.sel) {
-  const it = ac.items[i];
-  if (!it) return;
-  const ta = $('#editor');
-  const after = ta.value.slice(ta.selectionStart);
-  const closing = after.startsWith(']]') ? '' : ']]';
-  ta.setRangeText(it.name + closing, ac.start, ta.selectionStart, 'end');
-  if (!closing) ta.selectionStart = ta.selectionEnd = ta.selectionStart + 2;
-  closeAutocomplete();
-  scheduleSave();
-}
-
 // ---------- events ----------
-$('#editor').addEventListener('input', () => {
-  scheduleSave();
-  updateAutocomplete();
-});
-$('#editor').addEventListener('click', closeAutocomplete);
-$('#editor').addEventListener('blur', () => setTimeout(closeAutocomplete, 150));
-$('#editor').addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    closeAutocomplete();
-    linkWordAtCursor();
-    return;
-  }
-  if (ac.open) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      ac.sel = (ac.sel + (e.key === 'ArrowDown' ? 1 : -1) + ac.items.length) % ac.items.length;
-      updateAutocomplete();
-      return e.preventDefault();
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      acceptAutocomplete();
-      return e.preventDefault();
-    }
-    if (e.key === 'Escape') {
-      closeAutocomplete();
-      return e.preventDefault();
-    }
-  }
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    e.target.setRangeText('    ', e.target.selectionStart, e.target.selectionEnd, 'end');
-    scheduleSave();
-  }
-  // Auto-close [[ ]]
-  if (e.key === '[' && e.target.value[e.target.selectionStart - 1] === '[' && e.target.selectionStart === e.target.selectionEnd) {
-    e.preventDefault();
-    const s = e.target.selectionStart;
-    e.target.setRangeText('[]]', s, s, 'start');
-    e.target.selectionStart = e.target.selectionEnd = s + 1;
-    scheduleSave();
-    updateAutocomplete();
-  }
-});
-ac.el.addEventListener('mousedown', (e) => {
-  const li = e.target.closest('li');
-  if (li) {
-    e.preventDefault();
-    acceptAutocomplete(+li.dataset.i);
-  }
-});
-
 $('#preview').addEventListener('click', (e) => {
   const a = e.target.closest('a');
   if (!a) return;
@@ -585,17 +491,17 @@ $('#search').addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') {
     e.target.value = '';
     renderFileList();
-    $('#editor').focus();
+    editor.focus();
   }
 });
 
 $('#title').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
-    $('#editor').focus();
+    editor.focus();
   } else if (e.key === 'Escape') {
     e.target.value = nameOf(state.current);
-    $('#editor').focus();
+    editor.focus();
   }
 });
 $('#title').addEventListener('change', renameCurrent);
@@ -675,10 +581,7 @@ api.onVaultChanged(async (vaultId) => {
   }
   const after = state.notes.get(state.current)?.content;
   if (after !== undefined && after !== before && !pendingSave) {
-    const ta = $('#editor');
-    const sel = ta.selectionStart;
-    ta.value = after;
-    ta.selectionStart = ta.selectionEnd = Math.min(sel, after.length);
+    editor.replace(after);
     if (state.mode === 'preview') renderPreview();
   }
   renderSidePanel();
@@ -704,7 +607,6 @@ async function route() {
   state.vault = null;
   state.current = null;
   Graph.hide();
-  closeAutocomplete();
   $('#app').hidden = true;
   Home.show();
 }

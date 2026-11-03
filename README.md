@@ -35,6 +35,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 | --- | --- |
 | Alt+N | New note |
 | Ctrl+Enter | Turn the word at the cursor (or the selection) into a linked note |
+| Ctrl+B / Ctrl+I / Ctrl+U | Bold / italic / underline |
+| Ctrl+Shift+X | Strikethrough |
+| Ctrl+Alt+0–3 | Normal text / Heading 1–3 |
+| Ctrl+Shift+7 / 8 / 9 | Numbered list / bulleted list / checklist |
 | Ctrl+P / Ctrl+O | Search notes |
 | Ctrl+G | Toggle graph view |
 | Ctrl+E | Toggle edit / read |
@@ -47,4 +51,6 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - `public/home.js` – vault home screen
 - `public/renderer.js` – editor, links, backlinks, search, routing
 - `public/graph.js` – graph view (canvas + force simulation)
-- `public/vendor/` – marked (Markdown) and JSZip
+- `src/editor.js` – the editor (CodeMirror 6): live-rendered links, hidden Markdown marks, formatting commands.
+  Rebuild with `npm install && npm run build`; the output `public/vendor/editor.js` is committed so the site needs no build step.
+- `public/vendor/` – the built editor, marked (Markdown) and JSZip

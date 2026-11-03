@@ -82,9 +82,55 @@
           </div>
           <button id="btn-delete" class="icon danger" title="Delete note">🗑</button>
         </header>
+        <div id="toolbar" role="toolbar" aria-label="Formatting">
+          <button data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
+          <button data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
+          <span class="sep"></span>
+          <select id="tb-style" title="Text style (Ctrl+Alt+0–3)">
+            <option value="0">Normal text</option>
+            <option value="1">Heading 1</option>
+            <option value="2">Heading 2</option>
+            <option value="3">Heading 3</option>
+          </select>
+          <span class="sep"></span>
+          <select id="tb-font" title="Font for viewing notes (Markdown files don't store fonts)">
+            <option value="sans">Sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Mono</option>
+          </select>
+          <span class="sep"></span>
+          <div class="size" title="Text size for viewing notes">
+            <button data-size="-1" aria-label="Smaller text">−</button>
+            <span id="tb-size">16</span>
+            <button data-size="1" aria-label="Larger text">+</button>
+          </div>
+          <span class="sep"></span>
+          <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+          <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+          <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+          <button data-cmd="strike" title="Strikethrough (Ctrl+Shift+X)"><s>S</s></button>
+          <button data-cmd="code" title="Inline code"><code>&lt;/&gt;</code></button>
+          <span class="sep"></span>
+          <button data-cmd="link" title="Link to note (Ctrl+Enter)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="6" r="2.5"/><circle cx="15" cy="9" r="2.5"/><circle cx="8" cy="15" r="2.5"/><path d="M7.3 6.6 12.6 8.4M13.2 10.8 9.8 13.4"/></svg>
+          </button>
+          <span class="sep"></span>
+          <button data-cmd="bullet" title="Bulleted list (Ctrl+Shift+8)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="5" r="1.4"/><circle cx="4" cy="10" r="1.4"/><circle cx="4" cy="15" r="1.4"/><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+          </button>
+          <button data-cmd="number" title="Numbered list (Ctrl+Shift+7)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><text x="1.5" y="7.5">1</text><text x="1.5" y="17">2</text><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+          </button>
+          <button data-cmd="task" title="Checklist (Ctrl+Shift+9)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="4.5" height="4.5" rx="1"/><rect x="2" y="12" width="4.5" height="4.5" rx="1"/><path d="M9 5h8M9 14h8"/></svg>
+          </button>
+          <button data-cmd="quote" title="Quote">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v12M8 6h9M8 10h9M8 14h6"/></svg>
+          </button>
+        </div>
         <div id="content">
-          <textarea id="editor" spellcheck="false" placeholder="Start writing…  Type [[ to link a note, or press Ctrl+Enter on a word to turn it into one"></textarea>
-          <article id="preview" class="markdown"></article>
+          <div id="editor"></div>
+          <div id="preview"><article class="page markdown"></article></div>
         </div>
       </section>
 
@@ -121,12 +167,12 @@
     </aside>
   </div>
 
-  <ul id="ac" hidden></ul>
   <div id="toast" role="status" hidden></div>
   <input id="file-input" type="file" accept=".md,.zip" multiple hidden>
 
   <script src="vendor/marked.umd.js"></script>
   <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/editor.js"></script>
   <script src="storage.js"></script>
   <script src="graph.js"></script>
   <script src="home.js"></script>
