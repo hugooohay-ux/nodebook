@@ -457,7 +457,7 @@ const Graph = (() => {
       const [sx, sy] = start.get(n.id);
       const [gx, gy] = end.get(n.id);
       const anchor = byId.get(swingsAround.get(n.id)) || null;
-      const anim = { sx, sy, gx, gy, t0: now + stepsOut(n) * 120, dur: 750, anchor };
+      const anim = { sx, sy, gx, gy, t0: now + stepsOut(n) * 180, dur: 1400, anchor };
       if (anchor) {
         const [asx, asy] = start.get(anchor.id);
         const [agx, agy] = end.get(anchor.id);
@@ -471,7 +471,8 @@ const Graph = (() => {
     for (const n of moved) [n.x, n.y] = start.get(n.id);
   }
 
-  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  // Gentle ease in and out (no rush in the middle)
+  const easeInOut = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
 
   // Where an animating note is this frame (its anchor may be moving too, so the branch follows it)
   function animAt(n, now, stack = new Set()) {
