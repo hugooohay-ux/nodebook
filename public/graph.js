@@ -86,13 +86,21 @@ const Graph = (() => {
     const groupList = new Map((groups?.list || []).map((g) => [g.id, g]));
     for (const n of keep) n.group = groupList.get(groups?.members?.[n.id]) || null;
 
-    // Size scales linearly from the note with the fewest links (0) to the one with the most (1)
-    const counts = keep.map((n) => n.links);
-    const lo = Math.min(...counts);
-    const hi = Math.max(...counts);
-    for (const n of keep) n.size = hi > lo ? (n.links - lo) / (hi - lo) : 0;
-
     byId = new Map(keep.map((n) => [n.id, n]));
+
+    // Size = how much sits below a note (every note reachable by following links one way),
+    // scaled linearly from the smallest (0) to the biggest (1).
+    // "Below" is whichever link direction has the clearest top note, so it works however links are written.
+    if (keep.length <= 1500) {
+      const reach = (dir) => keep.map((n) => walk(n, dir).size - 1);
+      const viaUp = reach('up');
+      const viaDown = reach('down');
+      const below = Math.max(...viaUp) >= Math.max(...viaDown) ? viaUp : viaDown;
+      keep.forEach((n, i) => (n.below = below[i]));
+    } else keep.forEach((n) => (n.below = n.links)); // very large vaults: plain link count is much cheaper
+    const lo = Math.min(...keep.map((n) => n.below));
+    const hi = Math.max(...keep.map((n) => n.below));
+    for (const n of keep) n.size = hi > lo ? (n.below - lo) / (hi - lo) : 0;
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
     nodes = keep;
 
@@ -116,6 +124,7 @@ const Graph = (() => {
     if (hover && !byId.has(hover.id)) hover = null;
     chainFor = undefined; // recompute the hover chain against the new nodes
     alpha = Math.max(alpha, 0.5);
+    untangleBudget = 900;
   }
 
   // Notes reachable from `start` by following links in one direction only ('down' or 'up'), with steps away
@@ -149,6 +158,13 @@ const Graph = (() => {
   }
 
   // ---------- simulation ----------
+  let crossings = 0; // how many pairs of lines cross right now
+  let untangleBudget = 0; // steps left to keep untangling; reset whenever the layout changes
+
+  // Do segments p–q and r–s cross (not just touch)?
+  const turn = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+  const segmentsCross = (p, q, r, s) => turn(p, q, r) * turn(p, q, s) < 0 && turn(r, s, p) * turn(r, s, q) < 0;
+
   function tick() {
     const n = nodes.length;
     const a = alpha;
@@ -175,6 +191,26 @@ const Graph = (() => {
       p.vx += dx * f; p.vy += dy * f;
       q.vx -= dx * f; q.vy -= dy * f;
     }
+    // Untangle: two lines that cross are pushed apart (whole lines, away from each other) until they don't
+    crossings = 0;
+    if (edges.length < 1500) {
+      for (let i = 0; i < edges.length; i++) {
+        const [p, q] = edges[i];
+        for (let j = i + 1; j < edges.length; j++) {
+          const [r, s] = edges[j];
+          if (p === r || p === s || q === r || q === s || !segmentsCross(p, q, r, s)) continue;
+          crossings++;
+          let vx = (p.x + q.x - r.x - s.x) / 2;
+          let vy = (p.y + q.y - r.y - s.y) / 2;
+          let len = Math.hypot(vx, vy);
+          if (len < 1) { vx = -(q.y - p.y); vy = q.x - p.x; len = Math.hypot(vx, vy) || 1; }
+          const f = 1.5 / len;
+          for (const n of [p, q]) if (!n.pinned) { n.vx += vx * f; n.vy += vy * f; }
+          for (const n of [r, s]) if (!n.pinned) { n.vx -= vx * f; n.vy -= vy * f; }
+        }
+      }
+    }
+
     // Keep notes off lines that aren't theirs: push the note sideways, and the line a little the other way
     if (nodes.length * edges.length < 300000) {
       for (const [p, q] of edges) {
@@ -227,11 +263,13 @@ const Graph = (() => {
       p.y += p.vy;
       positions.set(p.id, { x: p.x, y: p.y, vx: p.vx, vy: p.vy });
     }
-    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0);
+    // Keep settling while lines still cross, for a limited number of steps (some link patterns can't be uncrossed)
+    if (crossings && untangleBudget > 0) untangleBudget--;
+    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0, crossings && untangleBudget > 0 ? 0.08 : 0);
   }
 
   // ---------- drawing ----------
-  // Smallest notes are 4px; the most-linked one grows by up to 16px times the "Node size" slider
+  // Smallest notes are 4px; the one with the most below it grows by up to 16px times the "Node size" slider
   const radius = (n) => 4 + (n.size || 0) * 16 * settings.sizeMul;
 
   function size() {
@@ -479,6 +517,7 @@ const Graph = (() => {
 
   function bind() {
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return; // only the main button drags or opens; right-click is handled by contextmenu
       const p = toWorld(e);
       const n = hit(p);
       downAt = { sx: p.sx, sy: p.sy };
@@ -533,22 +572,24 @@ const Graph = (() => {
     on('g-depth', 'input', (e) => { settings.depth = +e.target.value; if (settings.local) { rebuild(); fitPending = true; } });
     on('g-unresolved', 'change', (e) => { settings.unresolved = e.target.checked; rebuild(); });
     on('g-orphans', 'change', (e) => { settings.orphans = e.target.checked; rebuild(); });
-    on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
-    on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
+    on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); untangleBudget = 600; });
+    on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); untangleBudget = 600; });
     on('g-size', 'input', (e) => {
       settings.sizeMul = +e.target.value;
       alpha = Math.max(alpha, 0.3); // bigger notes need a bit more room
+      untangleBudget = 600;
       try { localStorage.setItem('nodebook:graph', JSON.stringify({ sizeMul: settings.sizeMul })); } catch { /* storage blocked */ }
     });
     const sizeSlider = document.getElementById('g-size');
     if (sizeSlider) sizeSlider.value = settings.sizeMul;
     on('g-fit', 'click', fit);
-    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.5); });
+    on('g-pull', 'change', (e) => { settings.pull = e.target.checked; alpha = Math.max(alpha, 0.5); untangleBudget = 600; });
     on('g-unpin', 'click', () => {
       pins.clear();
       for (const n of nodes) n.pinned = false;
       savePins();
       alpha = Math.max(alpha, 0.6);
+      untangleBudget = 900;
     });
   }
 
@@ -563,6 +604,7 @@ const Graph = (() => {
     if (pinned) pins.set(n.id, { x: Math.round(n.x), y: Math.round(n.y) });
     else pins.delete(n.id);
     alpha = Math.max(alpha, 0.35); // let the other notes settle around it
+    untangleBudget = 600;
     savePins();
   }
 
@@ -610,8 +652,8 @@ const Graph = (() => {
       updateStats();
       if (fresh || settings.local) {
         // Work out the layout up front (within ~150 ms) so the graph opens settled instead of wriggling into place
-        const until = performance.now() + 150;
-        while (alpha > 0.01 && performance.now() < until) tick();
+        const until = performance.now() + 300;
+        while ((alpha > 0.01 || (crossings && untangleBudget > 0)) && performance.now() < until) tick();
         fitPending = true;
       }
       if (visible) return;
@@ -636,8 +678,9 @@ const Graph = (() => {
     // Current layout, read-only: notes with positions, and lines as pairs of note ids
     layout() {
       return {
-        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), pinned: !!n.pinned, group: n.group?.name || null })),
+        nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, r: radius(n), below: n.below, pinned: !!n.pinned, group: n.group?.name || null })),
         edges: edges.map(([p, q]) => [p.id, q.id]),
+        crossings,
       };
     },
     // Label of the note under a point on screen, if any
