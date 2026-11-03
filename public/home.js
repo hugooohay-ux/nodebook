@@ -59,8 +59,10 @@ const Home = (() => {
     canvas.height = h * dpr;
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
+    const cs = getComputedStyle(document.documentElement);
+    const color = (name) => cs.getPropertyValue(name).trim();
     if (!notes.length) {
-      ctx.fillStyle = '#5b6377';
+      ctx.fillStyle = color('--text-dim');
       ctx.font = '13px "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Empty vault', w / 2, h / 2 + 4);
@@ -73,7 +75,7 @@ const Home = (() => {
     const k = Math.min(2.2, (w - pad * 2) / (x1 - x0 || 1), (h - pad * 2) / (y1 - y0 || 1));
     const tx = (x) => w / 2 + (x - (x0 + x1) / 2) * k;
     const ty = (y) => h / 2 + (y - (y0 + y1) / 2) * k;
-    ctx.strokeStyle = 'rgba(140,150,175,.35)';
+    ctx.strokeStyle = color('--edge');
     ctx.lineWidth = 1;
     for (const [i, j] of edges) {
       ctx.beginPath();
@@ -82,7 +84,7 @@ const Home = (() => {
       ctx.stroke();
     }
     for (const n of nodes) {
-      ctx.fillStyle = n.deg > 2 ? '#3ec7b0' : '#9aa3b8';
+      ctx.fillStyle = n.deg > 2 ? color('--accent') : color('--node');
       ctx.beginPath();
       ctx.arc(tx(n.x), ty(n.y), Math.min(7, 2.5 + Math.sqrt(n.deg) * 1.4), 0, Math.PI * 2);
       ctx.fill();
@@ -174,6 +176,7 @@ const Home = (() => {
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('#card-menu')) closeMenu(); });
   window.addEventListener('resize', () => { if (!$('#home').hidden) render(); });
+  Theme.onChange(() => { if (!$('#home').hidden) render(); });
 
   $('#btn-import-vault').addEventListener('click', () => {
     const input = document.createElement('input');

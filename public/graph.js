@@ -1,14 +1,12 @@
 // Force-directed graph of notes, drawn on a canvas. No dependencies.
 const Graph = (() => {
-  const COLORS = {
-    bg: '#16181d',
-    node: '#9aa3b8',
-    unresolved: '#e0a458',
-    accent: '#3ec7b0',
-    edge: 'rgba(140, 150, 175, 0.28)',
-    edgeHi: 'rgba(62, 199, 176, 0.85)',
-    label: '#dfe3ec',
-  };
+  // Colours come from the CSS theme variables so the graph follows light/dark
+  let COLORS = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim();
+    COLORS = { bg: v('--bg'), node: v('--node'), unresolved: v('--unresolved'), accent: v('--accent'), edge: v('--edge'), edgeHi: v('--accent'), label: v('--text') };
+  }
 
   let canvas, ctx, opts;
   let nodes = [];
@@ -144,6 +142,7 @@ const Graph = (() => {
   }
 
   function draw() {
+    readColors();
     const { w, h, dpr } = size();
     const { current } = opts.getData();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
