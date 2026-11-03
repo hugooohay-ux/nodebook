@@ -243,7 +243,7 @@ const Graph = (() => {
       }
     }
     for (const p of nodes) positions.set(p.id, { x: p.x, y: p.y, vx: p.vx, vy: p.vy });
-    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0);
+    alpha = Math.max(alpha * 0.985, drag?.node ? 0.3 : 0); // keep linked notes following while you drag
   }
 
   // Held notes don't move: the one being dragged, pinned ones, and the one you dropped last
@@ -349,7 +349,7 @@ const Graph = (() => {
   // When lines cross (or run through notes, or labels overlap), move the notes involved — not held or pinned
   // ones — to another spot around the note they're linked to, e.g. swing a note's children round to its other
   // side. Each move is kept only if it makes things cleaner; repeat until nothing overlaps.
-  function troubleNotes() {
+  function troubleNotes(onlyOverlaps = false) {
     const out = new Set();
     for (let i = 0; i < edges.length; i++) {
       for (let j = i + 1; j < edges.length; j++) {
@@ -362,8 +362,8 @@ const Graph = (() => {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
       const len2 = dx * dx + dy * dy || 1;
-      // overly long lines are trouble too
-      if (Math.sqrt(len2) > settings.dist * 2.5) [p, q].forEach((n) => out.add(n));
+      // overly long lines are trouble too (unless we're only fixing overlaps)
+      if (!onlyOverlaps && Math.sqrt(len2) > settings.dist * 2.5) [p, q].forEach((n) => out.add(n));
       for (const m of nodes) {
         if (m === p || m === q) continue;
         const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
@@ -394,46 +394,53 @@ const Graph = (() => {
     return untidiness() + offCentre * 0.1;
   }
 
-  // After a change (a drop, a slider): work out a clean layout right away, then animate everything from
-  // where it is now to where it ends up, in one smooth movement. Two candidates, the cleaner one wins:
-  //  A) everything relaxes from where it is, then gets repaired note by note (the smaller change)
-  //  B) a fresh clean layout around the note you dropped (only if it's clearly cleaner)
+  // Lines that overlap something: two lines crossing, or a line running through a note
+  function overlaps() {
+    let k = countCrossings();
+    for (const [p, q] of edges) {
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const len2 = dx * dx + dy * dy || 1;
+      for (const m of nodes) {
+        if (m === p || m === q) continue;
+        const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
+        if (t > 0 && t < 1 && Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 6) k++;
+      }
+    }
+    return k;
+  }
+
+  // After a change (a drop, a slider): the graph freezes in the shape it has right now. Only if a line
+  // overlaps something do the notes involved move — as little as possible, keeping that shape — animated.
   function settleAndTidy() {
     for (const n of nodes) {
       if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
     }
+    alpha = 0; // stop exactly as it is
+    for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+    if (!overlaps()) return; // nothing overlaps: nothing moves
     const from = snapshot();
-    alpha = 1;
-    const until = performance.now() + 100;
-    while (alpha > 0.005 && performance.now() < until) tick();
-    alpha = 0;
-    let swings = improve(120);
-    const scoreA = repairScore();
-    if (untidiness() > 0.5) {
-      const posA = snapshot();
-      searchLayout(160);
-      const swingsB = improve(90);
-      const scoreB = repairScore();
-      if (scoreB < scoreA * 0.7 - 10) swings = swingsB;
-      else restore(posA);
-    }
+    const swings = improve(250, true);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     animateFrom(from, swings);
   }
 
   // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
-  function improve(budgetMs) {
+  // `minimal`: only fix overlapping lines, and move as little as possible (keeps the shape you left it in)
+  function improve(budgetMs, minimal = false) {
     const until = performance.now() + budgetMs;
     const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
     const free = (n) => !n.pinned && !held.has(n.id);
-    let score = repairScore();
-    const clean = () => untidiness() < 0.5;
+    const evaluate = minimal ? () => overlaps() * 1000 : repairScore;
+    const moveCost = minimal ? 2 : 0.01; // per pixel moved
+    let score = evaluate();
+    const clean = minimal ? () => overlaps() === 0 : () => untidiness() < 0.5;
     // End notes first; only if that isn't enough, notes with more links
     for (const maxLinks of [1, 2, 3, Infinity]) {
       let improved = true;
       while (!clean() && improved && performance.now() < until) {
         improved = false;
-        for (const n of troubleNotes().filter((t) => t.deg <= maxLinks)) {
+        for (const n of troubleNotes(minimal).filter((t) => t.deg <= maxLinks)) {
           // Its end notes (linked only to it) move along with it, keeping the branch together
           const tagAlong = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && m.deg === 1 && free(m));
           const anchors = [...n.nbrs].map((id) => byId.get(id)).filter((m) => m && !tagAlong.includes(m));
@@ -450,20 +457,21 @@ const Graph = (() => {
           let bestPos = null;
           let bestAnchor = null;
           let best = score;
-          // Try spots around each note it links to: many angles, at normal link length and its current distance
+          // Try spots around each note it links to: small turns from where it is now first (same distance,
+          // so the shape holds), then the full circle at normal link length and its current distance
           for (const anchor of anchors) {
-            const r0 = Math.max(settings.dist, Math.hypot(ox - anchor.x, oy - anchor.y));
-            for (const r of [settings.dist, settings.dist * 1.6, r0, r0 * 1.4]) {
-              for (let k = 0; k < 16; k++) {
-                const a = (k / 16) * Math.PI * 2;
-                moveTo(anchor.x + r * Math.cos(a), anchor.y + r * Math.sin(a));
-                // prefer small moves when two spots are equally clean
-                const s = repairScore() + Math.hypot(n.x - ox, n.y - oy) * 0.01;
-                if (s < best - 0.5) {
-                  best = s;
-                  bestPos = [n.x, n.y];
-                  bestAnchor = anchor;
-                }
+            const r0 = Math.max(settings.dist * 0.6, Math.hypot(ox - anchor.x, oy - anchor.y));
+            const now = Math.atan2(oy - anchor.y, ox - anchor.x);
+            const spots = [];
+            for (const d of [10, 20, 30, 45, 60, 80, 100]) for (const sgn of [1, -1]) spots.push([r0, now + (sgn * d * Math.PI) / 180]);
+            for (const r of [r0, settings.dist, settings.dist * 1.6, r0 * 1.4]) for (let k = 0; k < 16; k++) spots.push([r, (k / 16) * Math.PI * 2]);
+            for (const [r, a] of spots) {
+              moveTo(anchor.x + r * Math.cos(a), anchor.y + r * Math.sin(a));
+              const s = evaluate() + Math.hypot(n.x - ox, n.y - oy) * moveCost * (1 + tagAlong.length);
+              if (s < best - 0.5) {
+                best = s;
+                bestPos = [n.x, n.y];
+                bestAnchor = anchor;
               }
             }
           }
@@ -472,7 +480,7 @@ const Graph = (() => {
             moveTo(...bestPos);
             swingsAround.set(n.id, bestAnchor.id);
             for (const m of tagAlong) swingsAround.set(m.id, n.id); // its end notes ride along with it
-            score = repairScore();
+            score = evaluate();
             improved = true;
           }
           if (clean() || performance.now() > until) break;
@@ -827,7 +835,7 @@ const Graph = (() => {
       downAt = { sx: p.sx, sy: p.sy };
       drag = n ? { node: n } : { pan: true, sx: p.sx, sy: p.sy, cx: cam.x, cy: cam.y };
       if (n) {
-        alpha = Math.max(alpha, 0.3);
+        alpha = Math.max(alpha, 0.3); // linked notes follow while you drag, like Obsidian
         for (const m of nodes) m.anim = null; // a new drag takes over from any repair still animating
       }
     });
@@ -838,7 +846,6 @@ const Graph = (() => {
         drag.node.x = p.x;
         drag.node.y = p.y;
         positions.set(drag.node.id, { x: p.x, y: p.y, vx: 0, vy: 0 });
-        alpha = Math.max(alpha, 0.3); // its neighbours adjust gently while you drag
       } else if (drag?.pan) {
         cam.x = drag.cx + (p.sx - drag.sx);
         cam.y = drag.cy + (p.sy - drag.sy);
