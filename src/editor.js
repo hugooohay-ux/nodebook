@@ -1,7 +1,7 @@
 // Markdown editor with live-rendered [[wiki links]], built on CodeMirror 6.
 // Bundled to public/vendor/editor.js by `npm run build`; exposes window.NoteEditor.
 import { Annotation, EditorSelection, EditorState, Prec, RangeSetBuilder, StateEffect } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType, drawSelection, keymap, placeholder } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, WidgetType, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
@@ -346,8 +346,9 @@ const theme = EditorView.theme({
   '@media (max-width: 700px)': { '.cm-scroller': { padding: '0' }, '.cm-content': { padding: '20px 16px', border: 'none', boxShadow: 'none', borderRadius: '0' } },
   '.cm-underline': { textDecoration: 'underline' },
   '.cm-line': { padding: '0' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--accent-soft) !important' },
+  // Native selection: CodeMirror's drawn selection layer sits behind the page background and would be hidden
+  '.cm-content ::selection, .cm-content::selection': { backgroundColor: 'color-mix(in srgb, var(--accent) 30%, transparent)' },
+  '.cm-dropCursor': { borderLeftColor: 'var(--accent)' },
   '.cm-placeholder': { color: 'var(--text-dim)' },
   '.cm-tooltip': { backgroundColor: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontFamily: 'var(--font)', maxHeight: '16em', padding: '4px' },
@@ -362,7 +363,6 @@ window.NoteEditor = {
   create(parent, opts) {
     const extensions = [
       history(),
-      drawSelection(),
       closeBrackets(),
       EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{'] } }]),
       markdown({ base: markdownLanguage }),
