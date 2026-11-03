@@ -695,10 +695,9 @@ function linkContext(content, targetPath) {
   return '';
 }
 
+// Links point up: a note sits under every note it links to (or is "part of"), and above every note that links to it
 function renderSidePanel() {
-  const bl = $('#backlinks');
   const ol = $('#outlinks');
-  bl.innerHTML = '';
   ol.innerHTML = '';
   const cur = state.current;
   const none = (ul, text) => {
@@ -708,41 +707,31 @@ function renderSidePanel() {
     ul.appendChild(li);
   };
 
-  // Sub-notes: notes that say they're part of this one
+  // Under this note: everything that links here (Part-of entries are links too)
   const subs = [];
-  if (cur) for (const [p, parents] of state.ups) if (parents.has(cur)) subs.push(p);
+  if (cur) for (const [p, links] of state.links) if (p !== cur && links.some((l) => l.resolved === cur)) subs.push(p);
   const sl = $('#subnotes');
   sl.innerHTML = '';
   $('#sub-count').textContent = subs.length ? `(${subs.length})` : '';
-  if (!subs.length) none(sl, cur ? 'None yet — use “Part of” on another note' : '—');
+  if (!subs.length) none(sl, cur ? 'Nothing yet — link to this note from another one' : '—');
   for (const p of subs.sort()) {
     const li = document.createElement('li');
     li.dataset.open = p;
     li.textContent = nameOf(p);
-    sl.appendChild(li);
-  }
-
-  // Backlinks leave out sub-notes (listed above); outgoing links leave out parents (shown in the Part-of bar)
-  const backs = [];
-  if (cur) for (const [p, links] of state.links) if (!state.ups.get(p)?.has(cur) && links.some((l) => l.resolved === cur)) backs.push(p);
-  $('#bl-count').textContent = backs.length ? `(${backs.length})` : '';
-  if (!backs.length) none(bl, cur ? 'No backlinks' : '—');
-  for (const p of backs.sort()) {
-    const li = document.createElement('li');
-    li.dataset.open = p;
-    li.textContent = nameOf(p);
-    const ctx = linkContext(state.notes.get(p).content, cur);
+    // Show the sentence the link is in, unless it's only a Part-of entry
+    const ctx = state.ups.get(p)?.has(cur) && !linkContext(stripFront(state.notes.get(p).content), cur) ? 'Part of' : linkContext(stripFront(state.notes.get(p).content), cur);
     if (ctx) {
       const s = document.createElement('span');
       s.className = 'ctx';
       s.textContent = ctx;
       li.appendChild(s);
     }
-    bl.appendChild(li);
+    sl.appendChild(li);
   }
 
-  const outs = cur ? (state.links.get(cur) || []).filter((l) => !state.ups.get(cur)?.has(l.resolved)) : [];
-  if (!outs.length) none(ol, cur ? 'No outgoing links' : '—');
+  // Above this note: what it links to
+  const outs = cur ? state.links.get(cur) || [] : [];
+  if (!outs.length) none(ol, cur ? 'Nothing — link to a note to put this one under it' : '—');
   for (const l of outs) {
     const li = document.createElement('li');
     li.textContent = l.resolved ? nameOf(l.resolved) : l.target;
@@ -890,7 +879,7 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, ups: state.ups, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
 });
 

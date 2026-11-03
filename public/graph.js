@@ -34,7 +34,7 @@ const Graph = (() => {
 
   // ---------- data ----------
   function rebuild() {
-    const { notes, links, ups, current } = opts.getData();
+    const { notes, links, current } = opts.getData();
     const map = new Map();
     const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set() });
     for (const n of notes.values()) map.set(n.path, node(n.path, n.name, false));
@@ -42,7 +42,6 @@ const Graph = (() => {
     const es = [];
     const seen = new Set();
     for (const [src, outs] of links) {
-      const parents = ups?.get(src);
       for (const l of outs) {
         let id = l.resolved;
         if (!id) {
@@ -50,10 +49,9 @@ const Graph = (() => {
           id = '?' + l.target.toLowerCase();
           if (!map.has(id)) map.set(id, node(id, l.target, true));
         }
-        // "Down" is the direction a chain flows: a normal link points down to its target,
-        // but a "Part of" link points up, so it counts as the parent pointing down to this note
-        if (parents?.has(id)) map.get(id).down.add(src);
-        else map.get(src).down.add(id);
+        // Links point up: a note sits under every note it links to ("Part of" is the same, just not in the text),
+        // so a hover chain flows from a note down to the notes that link to it
+        map.get(id).down.add(src);
         const key = src < id ? src + '\n' + id : id + '\n' + src;
         if (seen.has(key)) continue;
         seen.add(key);
