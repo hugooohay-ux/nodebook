@@ -13,7 +13,7 @@
   <!-- ---------- home: all vaults ---------- -->
   <div id="home" hidden>
     <header id="home-bar" class="home-bar">
-      <span class="brand">◉ Nodebook</span>
+      <span class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg><span>Nodebook</span></span>
       <input id="vault-search" type="search" placeholder="Search vaults">
       <button id="btn-import-vault" title="Import a .zip of Markdown notes as a new vault">Import .zip</button>
       <button class="icon theme-toggle"></button>
@@ -54,9 +54,10 @@
   <!-- ---------- inside a vault: every note as a document card ---------- -->
   <div id="vault-home" hidden>
     <header class="home-bar">
-      <a class="brand" href="#/" title="All vaults">◉ Nodebook</a>
+      <a class="brand" href="#/" title="All vaults"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg><span>Nodebook</span></a>
       <span class="crumb">›</span>
       <span id="vh-name" class="vh-name" title="Click to rename vault"></span>
+      <button id="vh-more" class="icon card-more" title="Rename, export or delete this vault">⋮</button>
       <div class="seg view-toggle">
         <button data-view="docs">Documents</button>
         <button data-view="graph" title="Graph view (Ctrl+G)">Graph</button>
@@ -103,6 +104,12 @@
     </section>
   </div>
 
+  <ul id="vault-menu" class="menu" hidden>
+    <li data-act="rename">Rename vault</li>
+    <li data-act="export">Export as .zip</li>
+    <li data-act="delete" class="danger">Delete vault</li>
+  </ul>
+
   <ul id="note-menu" class="menu" hidden>
     <li data-act="open">Open</li>
     <li data-act="rename">Rename</li>
@@ -114,7 +121,7 @@
     <header id="topbar">
       <button id="btn-menu" class="icon" title="Notes">☰</button>
       <a id="btn-home" href="#/" title="All notes in this vault">
-        <svg viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg>
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg>
       </a>
       <div class="titles">
         <input id="title" spellcheck="false" title="Rename note">

@@ -102,9 +102,9 @@ const Home = (() => {
           <div class="card-info">
             <div class="card-text">
               <div class="card-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</div>
-              <div class="card-meta"><span class="card-icon">◉</span>${v.notes.length} note${v.notes.length === 1 ? '' : 's'} · Opened ${opened(v.opened)}</div>
+              <div class="card-meta"><span class="card-icon"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><g class="edges"><line x1="8" y1="9" x2="23" y2="13"/><line x1="8" y1="9" x2="12" y2="24"/><line x1="23" y1="13" x2="12" y2="24"/></g><circle cx="8" cy="9" r="4"/><circle cx="23" cy="13" r="5"/><circle cx="12" cy="24" r="4"/></svg></span>${v.notes.length} note${v.notes.length === 1 ? '' : 's'} · Opened ${opened(v.opened)}</div>
             </div>
-            <button class="card-more icon" title="More actions">⋮</button>
+            <button class="card-more icon" title="Rename, export or delete">⋮</button>
           </div>
         </div>`
       )
@@ -150,20 +150,31 @@ const Home = (() => {
   $('#vault-search').addEventListener('input', render);
   document.querySelectorAll('#home .template').forEach((b) => b.addEventListener('click', () => create(b.dataset.template)));
 
+  function openMenu(id, x, y) {
+    const menu = $('#card-menu');
+    menuFor = id;
+    menu.hidden = false;
+    menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 8) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+  }
+
   $('#vault-grid').addEventListener('click', (e) => {
     const card = e.target.closest('.vault-card');
     if (!card) return;
     if (e.target.closest('.card-more')) {
       e.stopPropagation();
       const r = e.target.getBoundingClientRect();
-      const menu = $('#card-menu');
-      menuFor = card.dataset.id;
-      menu.hidden = false;
-      menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
-      menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8) + 'px';
-      return;
+      return openMenu(card.dataset.id, r.left, r.bottom + 4);
     }
     open(card.dataset.id);
+  });
+  // Right-click a vault for the same menu
+  $('#vault-grid').addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.vault-card');
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openMenu(card.dataset.id, e.clientX, e.clientY);
   });
   $('#vault-grid').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.classList.contains('vault-card')) open(e.target.dataset.id);

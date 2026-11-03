@@ -497,11 +497,49 @@ $('#vh-new').addEventListener('click', newNote);
 document.querySelectorAll('.view-toggle button').forEach((b) =>
   b.addEventListener('click', () => { location.hash = b.dataset.view === 'graph' ? `${vaultHash()}/graph` : vaultHash(); })
 );
-$('#vh-name').addEventListener('click', async () => {
+async function renameVault() {
   const name = prompt('Rename vault', state.vault.name)?.trim();
   if (!name || name === state.vault.name) return;
   await api.renameVault(state.vault.id, name);
   setVaultName(name);
+}
+$('#vh-name').addEventListener('click', renameVault);
+
+// ⋮ next to the vault name: rename / export / delete this vault
+$('#vh-more').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const r = e.currentTarget.getBoundingClientRect();
+  const menu = $('#vault-menu');
+  menu.hidden = false;
+  menu.style.left = Math.min(r.left, innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = r.bottom + 4 + 'px';
+});
+$('#vault-menu').addEventListener('click', async (e) => {
+  const li = e.target.closest('li');
+  $('#vault-menu').hidden = true;
+  if (!li) return;
+  if (li.dataset.act === 'rename') renameVault();
+  else if (li.dataset.act === 'export') api.exportVault();
+  else if (li.dataset.act === 'delete') {
+    if (!confirm(`Delete "${state.vault.name}" and its ${state.notes.size} notes? This can't be undone — export it first if you want a backup.`)) return;
+    const id = state.vault.id;
+    location.hash = '#/';
+    await api.deleteVault(id);
+    Home.refresh();
+  }
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#vault-menu')) $('#vault-menu').hidden = true; });
+
+// Right-click a note card for its menu
+$('#note-grid').addEventListener('contextmenu', (e) => {
+  const card = e.target.closest('.note-card');
+  if (!card) return;
+  e.preventDefault();
+  const menu = $('#note-menu');
+  noteMenuFor = card.dataset.path;
+  menu.hidden = false;
+  menu.style.left = Math.min(e.clientX, innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = Math.min(e.clientY, innerHeight - menu.offsetHeight - 8) + 'px';
 });
 $('#vh-export').addEventListener('click', () => api.exportVault());
 $('#vh-import').addEventListener('click', () => $('#file-input').click());
