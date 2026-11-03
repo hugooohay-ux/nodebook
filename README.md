@@ -36,7 +36,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:
   its notes share its colour in the graph and can be pulled together. Groups can also be set from the graph
   (right-click a note) or the chip on a note, and managed in the graph panel.
-- "Example: Astronomy" template on the home screen: about 100 linked notes in 6 folders, to try everything out
+- "Example: Solar System" template on the home screen: 26 notes in 3 folders, with one-way "Part of" chains and a few see-also links
 - Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter

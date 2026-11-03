@@ -25,6 +25,7 @@ const Graph = (() => {
   const held = new Set(); // notes dropped somewhere by hand this session (stay put, not saved)
   const guide = new Map(); // while dragging: where notes are gliding to so lines stop overlapping (id -> [x, y])
   let lastLive = 0;
+  let dragRegion = null; // while dragging: the notes allowed to follow
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
   let visible = false;
@@ -216,6 +217,7 @@ const Graph = (() => {
       p.vx -= (p.x - mx) * g * a;
       p.vy -= (p.y - my) * g * a;
       if (isHeld(p)) { p.vx = p.vy = 0; continue; }
+      if (dragRegion && !dragRegion.has(p)) { p.vx = p.vy = 0; } // far from the dragged note: stays put
       p.vx *= 0.6;
       p.vy *= 0.6;
       const v = Math.hypot(p.vx, p.vy);
@@ -364,6 +366,7 @@ const Graph = (() => {
   function findCleanLayout(budgetMs = 400, from = null) {
     searchLayout(budgetMs);
     const swings = improve(300);
+    for (const [id, a] of polish(new Set(nodes), 150, snapshot())) if (!swings.has(id)) swings.set(id, a); // even out the shapes
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     if (from) animateFrom(from, swings);
   }
@@ -422,7 +425,7 @@ const Graph = (() => {
     my /= nodes.length || 1;
     let offCentre = 0;
     for (const n of nodes) offCentre += (n.size || 0) * Math.hypot(n.x - mx, n.y - my);
-    return untidiness() + offCentre * 0.1;
+    return untidiness() + offCentre * 0.1 + shapeScore();
   }
 
   // Notes on top of (or touching) each other
@@ -470,12 +473,117 @@ const Graph = (() => {
     restore(snap);
   }
 
-  // After a change (a drop, a slider): work out a clean layout right away, then animate everything from
-  // where it is now to where it ends up, in one smooth movement. Two candidates, the cleaner one wins:
-  //  A) everything relaxes from where it is, then gets repaired note by note (the smaller change)
-  //  B) a fresh clean layout around the note you dropped (only if it's clearly cleaner)
-  // Notes already gliding out of the way while you dragged start from where they were heading.
-  function settleAndTidy() {
+  const nbrsOf = (n) => [...n.nbrs].map((id) => byId.get(id)).filter(Boolean);
+
+  // Notes up to `hops` links away from n (including n)
+  function around(n, hops) {
+    const seen = new Set([n]);
+    let ring = [n];
+    for (let h = 0; h < hops; h++) {
+      const next = [];
+      for (const p of ring) for (const m of nbrsOf(p)) if (!seen.has(m)) { seen.add(m); next.push(m); }
+      ring = next;
+    }
+    return seen;
+  }
+
+  // How far the graph is from looking like star constellations — lower is better:
+  //  - lines about the same length (the Spacing slider), so shapes come out even
+  //  - the lines at each note spread out instead of bunching up, so the gaps between them close into
+  //    simple, open shapes (triangles, quadrilaterals, fans) rather than slivers
+  // `only`: score just these notes and their lines
+  function shapeScore(only = null) {
+    const D = settings.dist;
+    const seen = new Set();
+    let s = 0;
+    for (const n of only || nodes) {
+      const ns = nbrsOf(n);
+      for (const m of ns) {
+        const key = n.id < m.id ? n.id + '\n' + m.id : m.id + '\n' + n.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const e = (Math.hypot(m.x - n.x, m.y - n.y) - D) / D;
+        s += e * e * 40;
+      }
+      if (ns.length < 2) continue;
+      const angs = ns.map((m) => Math.atan2(m.y - n.y, m.x - n.x)).sort((a, b) => a - b);
+      const want = Math.min((2 * Math.PI) / angs.length, Math.PI / 2.2); // the gap two lines should at least have
+      for (let i = 0; i < angs.length; i++) {
+        const gap = i + 1 < angs.length ? angs[i + 1] - angs[i] : angs[0] + 2 * Math.PI - angs[i];
+        const tight = Math.max(0, want - gap);
+        s += tight * tight * 60;
+      }
+    }
+    return s;
+  }
+
+  // Small, local nudges that make `region` more constellation-like without changing the overall shape:
+  // each note may turn a little around a linked note or ease towards the usual line length. A nudge is kept
+  // only if it improves the shapes there, adds no overlap, and is worth how far the note moves from `origin`.
+  function polish(region, budgetMs, origin) {
+    const until = performance.now() + budgetMs;
+    const D = settings.dist;
+    const list = [...region].filter((n) => !isHeld(n) && n.nbrs.size);
+    const swings = new Map();
+    let base = overlaps();
+    for (let pass = 0; pass < 8 && performance.now() < until; pass++) {
+      let any = false;
+      for (const n of list) {
+        if (performance.now() > until) break;
+        const ns = nbrsOf(n);
+        const tagAlong = ns.filter((m) => m.deg === 1 && !isHeld(m));
+        const anchors = ns.filter((m) => !tagAlong.includes(m));
+        if (!anchors.length) continue;
+        const local = [n, ...ns];
+        const [fx, fy] = origin.get(n.id);
+        const ox = n.x;
+        const oy = n.y;
+        const moveTo = (x, y) => {
+          const dx = x - n.x;
+          const dy = y - n.y;
+          n.x = x;
+          n.y = y;
+          for (const m of tagAlong) { m.x += dx; m.y += dy; }
+        };
+        const cost = () => shapeScore(local) + Math.hypot(n.x - fx, n.y - fy) * 0.08 * (1 + tagAlong.length);
+        let best = cost();
+        let bestPos = null;
+        let bestAnchor = null;
+        for (const a of anchors) {
+          const r0 = Math.hypot(ox - a.x, oy - a.y) || D;
+          const t0 = Math.atan2(oy - a.y, ox - a.x);
+          for (const r of [r0, (r0 + D) / 2, D]) {
+            for (const da of [0, 0.12, -0.12, 0.25, -0.25]) {
+              if (r === r0 && !da) continue;
+              moveTo(a.x + r * Math.cos(t0 + da), a.y + r * Math.sin(t0 + da));
+              const c = cost();
+              if (c < best - 0.3 && overlaps() <= base) {
+                best = c;
+                bestPos = [n.x, n.y];
+                bestAnchor = a;
+              }
+            }
+          }
+        }
+        moveTo(ox, oy);
+        if (bestPos) {
+          moveTo(...bestPos);
+          swings.set(n.id, bestAnchor.id);
+          for (const m of tagAlong) swings.set(m.id, n.id);
+          base = overlaps();
+          any = true;
+        }
+      }
+      if (!any) break;
+    }
+    return swings;
+  }
+
+  // After a change: the graph keeps its shape. Only around the note you dropped (two links out) do notes
+  // move — first anything overlapping is fixed with the smallest moves, then the shapes there are evened out
+  // into constellation-like ones. Animated. `dropped`: the note you let go of (none for a slider change —
+  // then the whole graph gets the gentle evening-out).
+  function settleAndTidy(dropped = null) {
     for (const n of nodes) {
       if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
     }
@@ -486,21 +594,10 @@ const Graph = (() => {
     }
     const continuing = guide.size > 0;
     guide.clear();
-    alpha = 1;
-    const until = performance.now() + 100;
-    while (alpha > 0.005 && performance.now() < until) tick();
-    alpha = 0;
-    let swings = improve(120);
-    const scoreA = repairScore();
-    // B is only worth it for smaller vaults: in a big one a fresh layout is slow and loses the shape you made
-    if (nodes.length <= 60 && untidiness() > 0.5) {
-      const posA = snapshot();
-      searchLayout(160);
-      const swingsB = improve(90);
-      const scoreB = repairScore();
-      if (scoreB < scoreA * 0.7 - 10) swings = swingsB;
-      else restore(posA);
-    }
+    alpha = 0; // stop exactly as it is
+    const swings = overlaps() ? improve(150, true) : new Map();
+    const region = dropped ? around(dropped, 2) : new Set(nodes);
+    for (const [id, a] of polish(region, 90, from)) if (!swings.has(id)) swings.set(id, a);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     // notes already gliding finish with an ease-out, so they don't stop and start again
     animateFrom(from, swings, continuing ? { dur: 1600, ease: 'out' } : {});
@@ -922,6 +1019,7 @@ const Graph = (() => {
         alpha = Math.max(alpha, 0.3); // linked notes follow while you drag, like Obsidian
         for (const m of nodes) m.anim = null; // a new drag takes over from any repair still animating
         guide.clear();
+        dragRegion = around(n, 2); // only notes near the one in your hand follow it
       }
     });
     window.addEventListener('pointermove', (e) => {
@@ -951,10 +1049,11 @@ const Graph = (() => {
         held.clear();
         held.add(drag.node.id);
       }
-      const dropped = drag.node && !clicked;
+      const dropped = drag.node && !clicked ? drag.node : null;
       drag = null;
       downAt = null;
-      if (dropped) settleAndTidy(); // the rest rearranges around it so nothing crosses, in one smooth movement
+      dragRegion = null;
+      if (dropped) settleAndTidy(dropped); // only the notes around it adjust, in one smooth movement
     });
     canvas.addEventListener('pointerleave', () => { if (!drag) hover = null; });
     // Right-click a note: open it, or let a placed note float again
