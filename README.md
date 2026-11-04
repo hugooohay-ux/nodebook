@@ -35,7 +35,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
 - "★ Critical" (in the same bar): any note (linked or not) a note's chain must go to first, then on up from there, even when another
   route is shorter (e.g. a shortcut link from a top note). Coming from any other note, the chain reaches the
-  note but doesn't carry on below it. The critical line is drawn thicker when lit. Stored as `critical:`.
+  note but doesn't carry on below it. No line is added for it: the highlight travels along the shortest chain of existing links to get there,
+  drawn thicker. Stored as `critical:`.
 - Note size = how much sits below a note along its links
 - Renaming a note updates every link to it across the vault (all link forms, and "Related to")
 - Deleting a note turns links to it into plain text, so nothing is left pointing at a note that's gone

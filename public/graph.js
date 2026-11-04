@@ -75,11 +75,10 @@ const Graph = (() => {
         connect(src, id);
       }
     }
-    // "Critical": the one note this note's chain must go through on its way up
+    // "Critical": the one note this note's chain must get to first on its way up. It doesn't add a line:
+    // the highlight travels along existing links to get there.
     for (const [a, c] of critical || []) {
-      if (!map.has(a) || !map.has(c)) continue;
-      map.get(a).critical = c;
-      connect(a, c);
+      if (map.has(a) && map.has(c)) map.get(a).critical = c;
     }
     for (const [a, rs] of related || []) {
       if (!map.has(a)) continue;
@@ -158,7 +157,6 @@ const Graph = (() => {
       ring = next;
     }
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
-    for (const e of edges) e.crit = e[0].critical === e[1].id || e[1].critical === e[0].id; // drawn stronger when lit
     nodes = keep;
 
     let added = false;
@@ -224,30 +222,70 @@ const Graph = (() => {
   //    (Juridisk person climbs through Rättskapacitet, not through Handelsbolag, which is further from the top).
   //    Notes directly above that aren't closer still light up one step, but the chain doesn't go on through them.
   // and its "Related to" notes, one step only.
+  // The shortest chain of existing connections from a to b: the notes after a, ending with b (null if none)
+  function pathBetween(a, b) {
+    if (a === b) return [];
+    const prev = new Map([[a.id, null]]);
+    let ring = [a];
+    while (ring.length && !prev.has(b.id)) {
+      const next = [];
+      for (const n of ring) {
+        for (const id of n.nbrs) {
+          if (prev.has(id) || !byId.has(id)) continue;
+          prev.set(id, n.id);
+          next.push(byId.get(id));
+        }
+      }
+      ring = next;
+    }
+    if (!prev.has(b.id)) return null;
+    const path = [];
+    for (let id = b.id; id !== a.id; id = prev.get(id)) path.unshift(byId.get(id));
+    return path;
+  }
+
   function chainFrom(start) {
     const below = walk(start, 'down');
     const above = new Map([[start.id, 0]]);
     const upEdges = new Set(); // the steps actually taken going up: "lower\nhigher"
-    for (const id of [...start.up, ...(byId.has(start.critical) ? [start.critical] : [])]) {
+    const critEdges = new Set(); // the steps on the way to a critical note (drawn stronger)
+    for (const id of start.up) {
       if (!byId.has(id) || id === start.id) continue;
       above.set(id, 1);
       upEdges.add(start.id + '\n' + id);
     }
+    const visitedUp = new Set();
     let ring = [start];
     while (ring.length) {
       const next = [];
       for (const n of ring) {
-        // a note with a critical note goes up through that note only, whatever the distances
-        const forced = byId.has(n.critical);
-        for (const id of forced ? [n.critical] : n.up) {
+        if (visitedUp.has(n.id)) continue;
+        visitedUp.add(n.id);
+        // A note with a critical note goes there first, whatever the distances — along the shortest chain of
+        // existing links if they aren't linked directly — and on up from there.
+        if (byId.has(n.critical)) {
+          const path = pathBetween(n, byId.get(n.critical));
+          if (!path) continue;
+          let prev = n;
+          for (const m of path) {
+            upEdges.add(prev.id + '\n' + m.id);
+            critEdges.add(prev.id + '\n' + m.id);
+            const d = above.get(prev.id) + 1;
+            if (!above.has(m.id) || (above.get(m.id) > d && m.id !== start.id)) above.set(m.id, d);
+            prev = m;
+          }
+          const c = path[path.length - 1];
+          if (above.get(c.id) !== 0 && !next.includes(c) && !visitedUp.has(c.id)) next.push(c);
+          continue;
+        }
+        for (const id of n.up) {
           const m = byId.get(id);
           if (!m || above.get(m.id) === 0) continue;
-          if (!forced && !(m.top < n.top)) continue; // otherwise only ever closer to the top
-          if (forced && above.has(m.id) && above.get(m.id) <= above.get(n.id)) { upEdges.add(n.id + '\n' + m.id); continue; } // a loop
+          if (!(m.top < n.top)) continue; // otherwise only ever closer to the top
           upEdges.add(n.id + '\n' + m.id);
           const d = above.get(n.id) + 1;
           if (!above.has(m.id) || (above.get(m.id) > d && m.id !== start.id)) above.set(m.id, d);
-          if (!next.includes(m)) next.push(m);
+          if (!next.includes(m) && !visitedUp.has(m.id)) next.push(m);
         }
       }
       ring = next;
@@ -257,7 +295,7 @@ const Graph = (() => {
     const linked = new Map();
     for (const id of start.linked) if (byId.has(id) && !all.has(id)) linked.set(id, 1);
     for (const [id, d] of linked) all.set(id, d);
-    return { all, below, above, linked, upEdges };
+    return { all, below, above, linked, upEdges, critEdges };
   }
 
   // ---------- motion: a calm free-form layout ----------
@@ -1093,6 +1131,7 @@ const Graph = (() => {
         // A highlighted edge continues one of the two lines, pointing away from the hovered note
         const [p, r] = e;
         e.from = e.to = null;
+        e.crit = !!c && (c.critEdges.has(p.id + '\n' + r.id) || c.critEdges.has(r.id + '\n' + p.id)); // drawn stronger
         if (!c) continue;
         for (const [dir, depth] of [['down', c.below], ['up', c.above]]) {
           const dp = depth.get(p.id);
