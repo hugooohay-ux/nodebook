@@ -1,7 +1,8 @@
 # Nodebook
 
 A Markdown note web app with vaults, `[[wiki links]]`, backlinks and a graph view.
-Everything is stored in your browser (IndexedDB) — no server, no account. Export a vault as a `.zip` to back it up or move it to another device.
+Everything is stored in your browser (IndexedDB) — no server, no account. It's an installable app (PWA)
+that works offline: in Chrome/Edge use the install icon in the address bar, on a phone "Add to Home screen". Export a vault as a `.zip` to back it up or move it to another device.
 
 ## Run locally
 
@@ -62,6 +63,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 ## Files
 
 - `public/storage.js` – vaults and notes in IndexedDB, import/export
+- `public/sw.js`, `public/pwa.js`, `public/manifest.webmanifest`, `public/icons/` – installable app + offline cache.
+  The service worker isn't registered on localhost, so local changes always show up.
 - `public/home.js` – vault home screen
 - `public/renderer.js` – editor, links, backlinks, search, routing
 - `public/graph.js` – graph view (canvas + force simulation)

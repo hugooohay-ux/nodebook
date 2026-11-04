@@ -5,7 +5,7 @@ const path = require('path');
 
 const root = path.join(__dirname, 'public');
 const port = process.env.PORT || 5173;
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
 
 http
   .createServer((req, res) => {
