@@ -12,6 +12,9 @@ const Graph = (() => {
   let lastFrame = 0;
   let fade = 0; // 0..1, how strongly the rest of the graph is dimmed around the focused node
   let chain = null; // Map id -> steps below the hovered node
+  let searchFor = null; // the search the best match was picked for
+  let searchNodes = null;
+  let searchHit = null; // the note whose chain the search lights up
   let chainFor; // the node `chain` was computed for
   let chainSince = 0; // when hovering started, for the trickle
   const STEP_MS = 110; // delay between each step of the chain lighting up
@@ -1060,9 +1063,18 @@ const Graph = (() => {
     ctx.fillRect(0, 0, w, h);
     ctx.setTransform(dpr * cam.k, 0, 0, dpr * cam.k, dpr * (w / 2 + cam.x), dpr * (h / 2 + cam.y));
 
-    const focus = hover || (drag && drag.node) || null;
     const q = settings.filter.toLowerCase();
-    const match = (n) => (!q || n.label.toLowerCase().includes(q)) && (!litGroup || n.group?.id === litGroup);
+    // Searching lights up the best-matching note's whole chain, as if it were hovered (hovering still wins):
+    // an exact name first, then a name starting with the search, then the biggest note containing it
+    if (searchFor !== q || searchNodes !== nodes) {
+      searchFor = q;
+      searchNodes = nodes;
+      const hits = q ? nodes.filter((n) => !n.unresolved && n.label.toLowerCase().includes(q)) : [];
+      const rank = (n) => (n.label.toLowerCase() === q ? 2 : n.label.toLowerCase().startsWith(q) ? 1 : 0);
+      searchHit = hits.sort((a, b) => rank(b) - rank(a) || b.size - a.size || b.deg - a.deg)[0] || null;
+    }
+    const focus = hover || (drag && drag.node) || searchHit || null;
+    const match = (n) => (!q || n.label.toLowerCase().includes(q) || !!chain?.has(n.id)) && (!litGroup || n.group?.id === litGroup);
 
     // Ease every highlight value toward its target so hover changes animate
     const now = performance.now();

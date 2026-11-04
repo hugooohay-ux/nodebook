@@ -51,7 +51,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - "Example: Solar System" template on the home screen: 26 notes in 3 folders: topics link to their subtopics, plus a few "Related to" connections
 - Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
-  local graph with depth, unresolved/orphan toggles, highlight filter
+  local graph with depth, unresolved/orphan toggles. Typing in Highlight lights up the best-matching note's whole path,
+  as if you hovered it
 - Full-text search, back/forward history, live sync between open tabs
 - Works on phones (sidebar becomes a slide-out menu)
 
