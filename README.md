@@ -33,7 +33,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   properties (older `up:` entries are read too). When hovering it lights up one step only, so
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
 - Note size = how much sits below a note along its links
-- Renaming a note updates links to it across the vault
+- Renaming a note updates every link to it across the vault (all link forms, and "Related to")
+- Deleting a note turns links to it into plain text, so nothing is left pointing at a note that's gone
+- Notes panel: Ctrl-click to pick several notes, Shift-click to pick everything in between. Drag or right-click
+  them to move them into a folder together, or press Delete to delete them; Esc clears the selection
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
   Right-click to let it float again, or "Unpin all". Notes are kept off lines that aren't theirs, and lines
   stop at the edge of each note.

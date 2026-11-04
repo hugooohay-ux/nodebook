@@ -10,6 +10,8 @@ const state = {
   groups: { list: [], members: {} }, // coloured groups for this vault
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
+  selected: new Set(), // notes picked in the notes panel with Ctrl/Shift-click
+  anchor: null, // where a Shift-click range starts
   mode: 'edit',
   view: 'home', // 'home' | 'docs' | 'graph' | 'note'
 };
@@ -172,6 +174,8 @@ async function enterVault(info) {
   state.vault = info;
   state.groups = await api.getGroups(info.id);
   state.current = null;
+  state.selected.clear();
+  state.anchor = null;
   setVaultName(info.name);
   $('#btn-home').href = $('#vault-name').href = vaultHash();
   $('#search').value = '';
@@ -279,11 +283,15 @@ function createGroup(name) {
   return g;
 }
 
+// `path`: one note's path, or a list of them (notes selected together)
 async function setGroup(path, groupId) {
-  if (groupId) state.groups.members[path] = groupId;
-  else delete state.groups.members[path];
+  for (const p of [].concat(path)) {
+    if (groupId) state.groups.members[p] = groupId;
+    else delete state.groups.members[p];
+  }
   await saveGroups();
 }
+const notesLabel = (paths) => ([].concat(paths).length === 1 ? `“${nameOf([].concat(paths)[0])}”` : `${paths.length} notes`);
 
 // Small menu for choosing a note's group: existing groups, "No group", and a box to type a new one
 let groupMenu = null;
@@ -291,18 +299,27 @@ function closeGroupMenu() {
   groupMenu?.remove();
   groupMenu = null;
 }
+// `path`: one note, or a list of selected notes (then it also offers to delete them all)
 function openGroupMenu(path, x, y) {
   closeGroupMenu();
-  const current = state.groups.members[path];
+  const many = Array.isArray(path) && path.length > 1;
+  const ids = new Set([].concat(path).map((p) => state.groups.members[p] || ''));
+  const current = ids.size === 1 ? [...ids][0] : undefined; // only tick a group when they all share it
   groupMenu = document.createElement('ul');
   groupMenu.className = 'menu group-menu';
   groupMenu.innerHTML =
+    (many ? `<li class="menu-head">${path.length} notes selected</li>` : '') +
     state.groups.list
       .map((g) => `<li data-id="${g.id}"><span class="swatch" style="--sw:${g.color}"></span>${escapeHtml(g.name)}${g.id === current ? '<span class="check">✓</span>' : ''}</li>`)
       .join('') +
-    `<li data-id="">No group${!current ? '<span class="check">✓</span>' : ''}</li>
+    `<li data-id="">No group${current === '' ? '<span class="check">✓</span>' : ''}</li>
      <li class="sep"></li>
-     <li class="new"><input placeholder="New group…" spellcheck="false"></li>`;
+     <li class="new"><input placeholder="New group…" spellcheck="false"></li>` +
+    (many ? `<li class="sep"></li><li class="danger" data-act="delete">Delete ${path.length} notes</li>` : '');
+  groupMenu.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
+    closeGroupMenu();
+    await deleteNotes(path);
+  });
   document.body.appendChild(groupMenu);
   groupMenu.style.left = Math.min(x, innerWidth - groupMenu.offsetWidth - 8) + 'px';
   groupMenu.style.top = Math.min(y, innerHeight - groupMenu.offsetHeight - 8) + 'px';
@@ -322,7 +339,7 @@ function openGroupMenu(path, x, y) {
     const g = state.groups.list.find((x) => x.name.toLowerCase() === name.toLowerCase()) || createGroup(name);
     closeGroupMenu();
     await setGroup(path, g.id);
-    toast(`“${nameOf(path)}” is in ${g.name}`);
+    toast(`${notesLabel(path)} ${[].concat(path).length === 1 ? 'is' : 'are'} in ${g.name}`);
   });
   if (!state.groups.list.length) input.focus();
 }
@@ -599,8 +616,11 @@ async function renameNote(path, newName) {
       await api.writeNote(n.path, updated);
     }
   }
+  if (state.selected.delete(path)) state.selected.add(newPath);
+  if (state.anchor === path) state.anchor = newPath;
   rebuildIndex();
   renderFileList();
+  if (state.view === 'graph') Graph.rebuild();
   return newPath;
 }
 
@@ -616,27 +636,70 @@ async function renameCurrent() {
   history.replaceState(null, '', noteHash(newPath));
 }
 
-async function deleteNote(path) {
-  const note = state.notes.get(path);
-  if (!note) return false;
-  const ok = await Dialog.confirm(`“${note.name}” will be deleted. This can't be undone.`, { title: 'Delete note?', okLabel: 'Delete', danger: true });
+// Other notes' text with every link to one of `gone` (paths being deleted) turned into plain text (its shown text),
+// and those notes dropped from "Related to". Returns a Map path -> new content, only for notes that change.
+function unlinkFrom(gone) {
+  const changed = new Map();
+  for (const n of state.notes.values()) {
+    if (gone.has(n.path)) continue;
+    let content = outsideCode(n.content, (part) =>
+      part.replace(LINK_RE, (m, inner) => {
+        const l = parseLink(inner);
+        return gone.has(resolve(l.target)) ? l.alias || l.raw : m;
+      })
+    );
+    const related = parseUps(n.content);
+    const keep = related.filter((r) => !gone.has(resolve(r)));
+    if (keep.length !== related.length) {
+      const { from, to, insert } = upsEdit(content, keep);
+      content = content.slice(0, from) + insert + content.slice(to);
+    }
+    if (content !== n.content) changed.set(n.path, content);
+  }
+  return changed;
+}
+
+// Deletes notes (after one confirmation). Links to them in other notes become plain text, so no empty
+// "not created yet" notes are left behind in the graph.
+async function deleteNotes(paths) {
+  paths = paths.filter((p) => state.notes.has(p));
+  if (!paths.length) return false;
+  const gone = new Set(paths);
+  const changed = unlinkFrom(gone);
+  const what = paths.length === 1 ? `“${nameOf(paths[0])}”` : `${paths.length} notes`;
+  const links = changed.size ? ` Links to ${paths.length === 1 ? 'it' : 'them'} in ${changed.size} other note${changed.size === 1 ? '' : 's'} become plain text.` : '';
+  const ok = await Dialog.confirm(`${what} will be deleted. This can't be undone.${links}`, { title: paths.length === 1 ? 'Delete note?' : `Delete ${paths.length} notes?`, okLabel: 'Delete', danger: true });
   if (!ok) return false;
-  if (state.current === path) {
+  if (gone.has(state.current)) {
     clearTimeout(saveTimer);
     pendingSave = null;
     state.current = null;
+  } else if (state.current && changed.has(state.current)) await flushSave();
+  const rewrites = unlinkFrom(gone); // again, now that any unsaved typing is saved
+  for (const p of paths) {
+    await api.trashNote(p);
+    state.notes.delete(p);
+    Graph.movePin(p, null);
+    delete state.groups.members[p];
+    state.selected.delete(p);
   }
-  await api.trashNote(path);
-  state.notes.delete(path);
-  Graph.movePin(path, null);
-  if (state.groups.members[path]) {
-    delete state.groups.members[path];
-    api.saveGroups(state.groups);
+  for (const [p, content] of rewrites) {
+    state.notes.get(p).content = content;
+    await api.writeNote(p, content);
   }
+  await api.saveGroups(state.groups);
   rebuildIndex();
   renderFileList();
+  if (state.current && changed.has(state.current)) {
+    editor.replace(state.notes.get(state.current).content);
+    renderPartOf();
+    renderSidePanel();
+  }
+  if (state.view === 'graph') Graph.rebuild();
+  if (state.view === 'docs') renderNoteGrid();
   return true;
 }
+const deleteNote = (path) => deleteNotes([path]);
 
 async function deleteCurrent() {
   if (await deleteNote(state.current)) location.replace(vaultHash());
@@ -684,7 +747,7 @@ function setFolderClosed(id, closed) {
 
 function noteItem(n, snippet, inFolder) {
   const li = document.createElement('li');
-  li.className = 'note' + (inFolder ? ' in-folder' : '');
+  li.className = 'note' + (inFolder ? ' in-folder' : '') + (state.selected.has(n.path) ? ' selected' : '');
   li.dataset.path = n.path;
   li.title = n.path;
   li.draggable = true;
@@ -706,6 +769,8 @@ function renderFileList() {
   const q = $('#search').value.trim().toLowerCase();
   const ul = $('#file-list');
   ul.innerHTML = '';
+  for (const p of state.selected) if (!state.notes.has(p)) state.selected.delete(p); // deleted or renamed away
+  $('#sidebar').classList.toggle('selecting', state.selected.size > 1);
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   const matches = [];
   for (const n of state.notes.values()) {
@@ -1043,16 +1108,62 @@ $('#file-list').addEventListener('click', (e) => {
     return renderFileList();
   }
   const li = e.target.closest('li.note');
-  if (li) openNote(li.dataset.path);
+  if (!li) return;
+  const path = li.dataset.path;
+  // Ctrl-click: add/remove one note; Shift-click: every note between the last one picked and this one.
+  // A plain click opens the note and clears the selection.
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    e.stopImmediatePropagation(); // keep the slide-out panel open on phones
+    if (!state.selected.size && state.current) state.selected.add(state.current); // the open note counts as picked
+    if (e.shiftKey && state.anchor) {
+      const order = [...document.querySelectorAll('#file-list li.note')].map((x) => x.dataset.path);
+      const [a, b] = [order.indexOf(state.anchor), order.indexOf(path)].sort((x, y) => x - y);
+      if (a >= 0) {
+        if (!(e.ctrlKey || e.metaKey)) state.selected.clear();
+        for (const p of order.slice(a, b + 1)) state.selected.add(p);
+      }
+    } else {
+      if (state.selected.has(path)) state.selected.delete(path);
+      else state.selected.add(path);
+      state.anchor = path;
+    }
+    return renderSelection();
+  }
+  clearSelection();
+  state.anchor = path;
+  openNote(path);
 });
-// Right-click: a note → choose its folder; a folder → its options
+function renderSelection() {
+  document.querySelectorAll('#file-list li.note').forEach((x) => x.classList.toggle('selected', state.selected.has(x.dataset.path)));
+  $('#sidebar').classList.toggle('selecting', state.selected.size > 1);
+}
+function clearSelection() {
+  if (!state.selected.size) return;
+  state.selected.clear();
+  renderSelection();
+}
+// Shift/Ctrl-clicking shouldn't also select the list's text
+$('#file-list').addEventListener('mousedown', (e) => {
+  if ((e.shiftKey || e.ctrlKey || e.metaKey) && e.target.closest('li.note')) e.preventDefault();
+});
+// With several notes selected: Esc clears the selection, Delete removes them (after asking)
+document.addEventListener('keydown', (e) => {
+  if (state.selected.size < 2 || e.target.closest('#editor, input, textarea, [contenteditable="true"]')) return;
+  if (e.key === 'Escape') clearSelection();
+  else if (e.key === 'Delete') {
+    e.preventDefault();
+    deleteNotes([...state.selected]);
+  }
+});
+// Right-click: a note → choose its folder (all selected notes, if it's one of them); a folder → its options
 $('#file-list').addEventListener('contextmenu', (e) => {
   const folder = e.target.closest('li.folder');
   const note = e.target.closest('li.note');
   if (!folder && !note) return;
   e.preventDefault();
-  if (folder) openFolderMenu(groupById(folder.dataset.group), e.clientX, e.clientY);
-  else openGroupMenu(note.dataset.path, e.clientX, e.clientY);
+  if (folder) return openFolderMenu(groupById(folder.dataset.group), e.clientX, e.clientY);
+  const p = note.dataset.path;
+  openGroupMenu(state.selected.has(p) && state.selected.size > 1 ? [...state.selected] : p, e.clientX, e.clientY);
 });
 // Drag a note onto a folder (or a note in it) to put it there; anywhere else in the list takes it out.
 let draggedNote = null;
@@ -1065,9 +1176,10 @@ function dropTarget(e) {
 $('#file-list').addEventListener('dragstart', (e) => {
   const li = e.target.closest('li.note');
   if (!li) return;
-  draggedNote = li.dataset.path;
+  // dragging one of the selected notes moves all of them
+  draggedNote = state.selected.has(li.dataset.path) && state.selected.size > 1 ? [...state.selected] : li.dataset.path;
   e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', nameOf(draggedNote));
+  e.dataTransfer.setData('text/plain', [].concat(draggedNote).map(nameOf).join(', '));
 });
 $('#file-list').addEventListener('dragover', (e) => {
   if (!draggedNote) return;
@@ -1088,11 +1200,13 @@ $('#file-list').addEventListener('drop', async (e) => {
   const path = draggedNote;
   draggedNote = null;
   const id = t.matches('li.folder') ? t.dataset.group : null;
-  if ((state.groups.members[path] || null) === id) return renderFileList();
+  const paths = [].concat(path);
+  if (paths.every((p) => (state.groups.members[p] || null) === id)) return renderFileList();
   if (id) setFolderClosed(id, false);
-  await setGroup(path, id);
+  await setGroup(paths, id);
   const g = groupById(id);
-  toast(g ? `“${nameOf(path)}” moved to ${g.name}` : `“${nameOf(path)}” is no longer in a folder`);
+  const one = paths.length === 1;
+  toast(g ? `${notesLabel(paths)} moved to ${g.name}` : `${notesLabel(paths)} ${one ? 'is' : 'are'} no longer in a folder`);
 });
 $('#file-list').addEventListener('dragend', () => {
   draggedNote = null;
