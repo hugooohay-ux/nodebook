@@ -34,8 +34,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   properties (older `up:` entries are read too). When hovering it lights up one step only, so
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
 - "★ Critical" (in the same bar): any note (linked or not) a note's chain must go to first, then on up from there, even when another
-  route is shorter (e.g. a shortcut link from a top note). Coming from any other note, the chain reaches the
-  note but doesn't carry on below it. No line is added for it: the highlight travels along the shortest chain of existing links to get there,
+  route is shorter (e.g. a shortcut link from a top note). It's one-way: it only steers that note's own path;
+  hovering the critical note doesn't light the note that points to it. No line is added for it: the highlight travels along the shortest chain of existing links to get there,
   drawn thicker. Stored as `critical:`.
 - Note size = how much sits below a note along its links
 - Renaming a note updates every link to it across the vault (all link forms, and "Related to")
