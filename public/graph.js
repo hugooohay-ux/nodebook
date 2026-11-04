@@ -1510,8 +1510,10 @@ const Graph = (() => {
       e.preventDefault(); // no browser menu on the graph (right-drag draws a selection box)
       if (boxed) { boxed = false; return; } // that right-click was a box selection
       if (box?.moved) return;
-      const n = hit(toWorld(e));
+      const p = toWorld(e);
+      const n = hit(p);
       if (n) showNodeMenu(n, e.clientX, e.clientY);
+      else opts.onBlankMenu?.({ x: p.x, y: p.y }, e.clientX, e.clientY); // empty space: e.g. a new note right here
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -1674,6 +1676,12 @@ const Graph = (() => {
     // Label of the note under a point on screen, if any
     noteAt(clientX, clientY) {
       return hit(toWorld({ clientX, clientY }))?.label || null;
+    },
+    // Put a (new) note at a spot in the graph and keep it there, like a note you've dropped
+    placeAt(id, x, y) {
+      positions.set(id, { x, y, vx: 0, vy: 0 });
+      held.clear();
+      held.add(id);
     },
     // The steps up that light up when hovering `id`, as "lower → higher" labels (for checking chains)
     upSteps(id) {

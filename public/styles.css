@@ -658,6 +658,15 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; poin
 .group-menu .new { padding: 4px 8px 6px; cursor: default; }
 .group-menu .new:hover { background: none; }
 .group-menu .new input { width: 100%; font-size: 13px; padding: 4px 8px; }
+/* right-click on empty graph space: new note here */
+.blank-menu { min-width: 230px; }
+.blank-menu li { cursor: default; }
+.blank-menu li:hover { background: none; }
+.blank-menu .menu-head { padding-bottom: 2px; font-weight: 600; color: var(--text); }
+.blank-menu .new { padding: 4px 10px; }
+.blank-menu .new input { width: 100%; font-size: 13px; padding: 6px 9px; border-radius: 7px; }
+.blank-menu .new input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.blank-menu .hint { padding: 2px 12px 4px; font-size: 11px; color: var(--text-dim); }
 
 .g-groups-head { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); font-weight: 600; }
 #g-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -566,6 +566,51 @@ async function createNoteNamed(name) {
   return path;
 }
 
+// Right-click on empty space in the graph: make a new note right there (type its name, Enter)
+let blankMenu = null;
+function closeBlankMenu() {
+  blankMenu?.remove();
+  blankMenu = null;
+}
+function openBlankMenu(at, x, y) {
+  closeBlankMenu();
+  closeGroupMenu();
+  blankMenu = document.createElement('ul');
+  blankMenu.className = 'menu blank-menu';
+  blankMenu.innerHTML = `<li class="menu-head">New note here</li>
+    <li class="new"><input placeholder="Note name…" spellcheck="false"></li>
+    <li class="hint">Enter to create · Shift+Enter to create and open</li>`;
+  document.body.appendChild(blankMenu);
+  blankMenu.style.left = Math.min(x, innerWidth - blankMenu.offsetWidth - 8) + 'px';
+  blankMenu.style.top = Math.min(y, innerHeight - blankMenu.offsetHeight - 8) + 'px';
+  const input = blankMenu.querySelector('input');
+  input.focus();
+  input.addEventListener('keydown', async (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') return closeBlankMenu();
+    if (e.key !== 'Enter') return;
+    let name = input.value.replace(/[\\/:*?"<>|]/g, '').trim();
+    if (!name) {
+      name = 'Untitled';
+      for (let i = 1; resolve(name); i++) name = `Untitled ${i}`;
+    }
+    const existing = resolve(name);
+    if (existing) {
+      toast(`“${nameOf(existing)}” already exists`);
+      return input.select();
+    }
+    closeBlankMenu();
+    const path = await createNoteNamed(name);
+    Graph.placeAt(path, at.x, at.y);
+    if (e.shiftKey) return openNote(path);
+    Graph.rebuild();
+    toast(`Created “${nameOf(path)}”`);
+  });
+}
+document.addEventListener('pointerdown', (e) => {
+  if (blankMenu && !e.target.closest('.blank-menu')) closeBlankMenu();
+});
+
 async function openOrCreate(target) {
   const existing = resolve(target);
   if (existing) return openNote(existing);
@@ -1445,6 +1490,7 @@ Graph.init($('#graph'), {
   onSelectionChange: () => renderSelection(),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
+  onBlankMenu: (at, x, y) => openBlankMenu(at, x, y),
   // right-click → Group… on a selected note groups all the selected notes
   onGroupMenu: (node, x, y) => openGroupMenu(state.selected.has(node.id) && state.selected.size > 1 ? [...state.selected] : node.id, x, y),
 });

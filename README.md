@@ -43,6 +43,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Graph: hold right-click and drag to draw a box; every note inside gets selected (Ctrl/Shift adds to the
   selection). Name a group in the Groups panel, or right-click a selected note → Group…, to group them all.
   Click empty space or press Esc to clear. A plain right-click on a note still opens its menu.
+- Graph: right-click empty space → type a name → Enter to create a note right there (Shift+Enter also opens it)
 - Notes panel: Ctrl-click to pick several notes, Shift-click to pick everything in between. Drag or right-click
   them to move them into a folder together, or press Delete to delete them; Esc clears the selection
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
