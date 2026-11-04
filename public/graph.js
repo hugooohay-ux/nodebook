@@ -1105,6 +1105,7 @@ const Graph = (() => {
 
     const q = settings.filter.toLowerCase();
     const selNow = selection();
+    const inBox = box?.moved ? notesInBox(box) : null; // previewed while drawing the box
     // Searching lights up the best-matching note's whole chain, as if it were hovered (hovering still wins):
     // an exact name first, then a name starting with the search, then the biggest note containing it
     if (searchFor !== q || searchNodes !== nodes) {
@@ -1275,16 +1276,23 @@ const Graph = (() => {
         ctx.arc(n.x, n.y, r + 4 / cam.k, 0, Math.PI * 2);
         ctx.stroke();
       }
-      // Selected (box-select or Ctrl/Shift-click in the notes panel): a dashed ring
-      if (selNow.has(n.id)) {
-        ctx.globalAlpha = 1;
+      // Selected (box-select or Ctrl/Shift-click in the notes panel), or inside the box being drawn:
+      // a soft halo with a crisp ring a little way out from the note
+      const picked = selNow.has(n.id) ? 1 : inBox?.has(n.id) ? 0.65 : 0;
+      n.sel = (n.sel || 0) + (picked - (n.sel || 0)) * ease;
+      if (n.sel > 0.02) {
+        const ringR = r + (5 + (1 - n.sel) * 4) / cam.k; // eases in from slightly further out
+        ctx.globalAlpha = 0.18 * n.sel;
         ctx.strokeStyle = COLORS.accent;
-        ctx.lineWidth = 2 / cam.k;
-        ctx.setLineDash([4 / cam.k, 3 / cam.k]);
+        ctx.lineWidth = 7 / cam.k;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 6 / cam.k, 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, ringR, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.95 * n.sel;
+        ctx.lineWidth = 1.75 / cam.k;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, ringR, 0, Math.PI * 2);
+        ctx.stroke();
       }
 
       // Expanding ripple rings around the hovered node
@@ -1308,33 +1316,56 @@ const Graph = (() => {
     ctx.fillStyle = COLORS.label;
     for (const n of nodes) {
       const base = n.id === current || (q && match(n)) ? 1 : zoomAlpha * 0.85;
-      const a = Math.max(base * vis(n), n.hot, n.nb);
+      const a = Math.max(base * vis(n), n.hot, n.nb, n.sel || 0); // selected notes always show their name
       if (a <= 0.02) continue;
       const size = 12 + n.hot * 3;
-      ctx.font = `${n.hot > 0.5 ? 600 : 400} ${size / cam.k}px "Segoe UI", sans-serif`;
+      ctx.font = `${n.hot > 0.5 || n.sel > 0.5 ? 600 : 400} ${size / cam.k}px "Segoe UI", sans-serif`;
       ctx.globalAlpha = a;
-      const r = radius(n) * (1 + n.hot * 0.45 + n.nb * 0.15);
+      const r = radius(n) * (1 + n.hot * 0.45 + n.nb * 0.15) + (n.sel || 0) * 6 / cam.k; // below the selection ring
       const ly = n.y + r + (3 + n.hot * 4) / cam.k;
       // A thin outline in the background colour hides any line running behind the text
       ctx.strokeStyle = COLORS.bg;
       ctx.lineWidth = 4 / cam.k;
       ctx.lineJoin = 'round';
       ctx.strokeText(n.label, n.x, ly);
-      ctx.fillStyle = COLORS.label;
+      ctx.fillStyle = n.sel > 0.5 ? COLORS.accent : COLORS.label;
       ctx.fillText(n.label, n.x, ly);
     }
-    // The selection box while right-dragging (screen coordinates)
-    if (box) {
+    // The selection box while right-dragging (screen coordinates): rounded, a soft fill, a crisp edge,
+    // and a small count of the notes inside at its corner
+    if (box?.moved) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const x = Math.min(box.x0, box.x1);
       const y = Math.min(box.y0, box.y1);
-      ctx.globalAlpha = 0.12;
+      const bw = Math.abs(box.x1 - box.x0);
+      const bh = Math.abs(box.y1 - box.y0);
+      const rad = Math.min(8, bw / 2, bh / 2);
+      ctx.beginPath();
+      ctx.roundRect(x + 0.5, y + 0.5, bw, bh, rad);
+      ctx.globalAlpha = 0.08;
       ctx.fillStyle = COLORS.accent;
-      ctx.fillRect(x, y, Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0));
-      ctx.globalAlpha = 0.9;
+      ctx.fill();
+      ctx.globalAlpha = 0.85;
       ctx.strokeStyle = COLORS.accent;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0));
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+      const count = (inBox?.size || 0) + (box.add ? [...selNow].filter((id) => !inBox?.has(id)).length : 0);
+      if (count) {
+        const text = String(count);
+        ctx.font = '600 11px "Segoe UI", sans-serif';
+        const pw = Math.max(20, ctx.measureText(text).width + 12);
+        const px = box.x1 + (box.x1 >= box.x0 ? 8 : -8 - pw);
+        const py = box.y1 + (box.y1 >= box.y0 ? 8 : -8 - 18);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = COLORS.accent;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, 18, 9);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, px + pw / 2, py + 9.5);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1380,18 +1411,27 @@ const Graph = (() => {
 
   // The selection is shared with the notes panel (the app's set of selected note paths)
   const selection = () => opts.getData().selected || new Set();
-  // Selects every note inside the screen rectangle; Ctrl/Shift adds to what's already selected
-  function selectInBox(b, add) {
-    const sel = selection();
-    if (!add) sel.clear();
+  // The notes inside a screen rectangle (a note counts once its circle overlaps the box)
+  function notesInBox(b) {
     const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
     const { w, h } = size();
+    const out = new Set();
     for (const n of nodes) {
       if (n.unresolved) continue;
       const sx = n.x * cam.k + w / 2 + cam.x;
       const sy = n.y * cam.k + h / 2 + cam.y;
-      if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) sel.add(n.id);
+      const rr = radius(n) * cam.k;
+      const cx = Math.max(x0, Math.min(sx, x1));
+      const cy = Math.max(y0, Math.min(sy, y1));
+      if (Math.hypot(sx - cx, sy - cy) <= rr) out.add(n.id);
     }
+    return out;
+  }
+  // Selects every note inside the screen rectangle; Ctrl/Shift adds to what's already selected
+  function selectInBox(b, add) {
+    const sel = selection();
+    if (!add) sel.clear();
+    for (const id of notesInBox(b)) sel.add(id);
     opts.onSelectionChange?.();
   }
 
