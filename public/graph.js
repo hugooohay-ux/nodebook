@@ -1094,7 +1094,6 @@ const Graph = (() => {
   function draw() {
     readColors();
     const { w, h, dpr } = size();
-    const { current } = opts.getData();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, w, h);
@@ -1236,7 +1235,7 @@ const Graph = (() => {
         ctx.fill();
       }
 
-      const accented = n.id === current || (q && match(n));
+      const accented = q && match(n);
       ctx.globalAlpha = v;
       ctx.fillStyle = accented ? COLORS.accent : n.group ? n.group.color : n.unresolved ? COLORS.unresolved : COLORS.node;
       ctx.beginPath();
@@ -1265,14 +1264,6 @@ const Graph = (() => {
         ctx.stroke();
       }
 
-      if (n.id === current) {
-        ctx.globalAlpha = v;
-        ctx.strokeStyle = COLORS.accent;
-        ctx.lineWidth = 2 / cam.k;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 4 / cam.k, 0, Math.PI * 2);
-        ctx.stroke();
-      }
       // Selected (box-select or Ctrl/Shift-click in the notes panel), or inside the box being drawn:
       // a soft halo with a crisp ring a little way out from the note
       const picked = selNow.has(n.id) ? 1 : inBox?.has(n.id) ? 0.65 : 0;
@@ -1312,7 +1303,7 @@ const Graph = (() => {
     ctx.textBaseline = 'top';
     ctx.fillStyle = COLORS.label;
     for (const n of nodes) {
-      const base = n.id === current || (q && match(n)) ? 1 : zoomAlpha * 0.85;
+      const base = q && match(n) ? 1 : zoomAlpha * 0.85;
       const a = Math.max(base * vis(n), n.hot, n.nb, n.sel || 0); // selected notes always show their name
       if (a <= 0.02) continue;
       const size = 12 + n.hot * 3;

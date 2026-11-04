@@ -1439,8 +1439,12 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   // Ctrl+N can't be intercepted in browsers, so new note is Alt+N
   if (e.altKey && k === 'n') { e.preventDefault(); newNote(); }
-  // Ctrl+G: the vault's graph (or back to its documents when already there)
-  else if (e.ctrlKey && k === 'g') { e.preventDefault(); location.hash = state.view === 'graph' ? vaultHash() : `${vaultHash()}/graph`; }
+  // Ctrl+G: the vault's graph; from the graph, back to the note you were on (or the documents page if none)
+  else if (e.ctrlKey && k === 'g') {
+    e.preventDefault();
+    if (state.view !== 'graph') location.hash = `${vaultHash()}/graph`;
+    else location.hash = state.current && state.notes.has(state.current) ? noteHash(state.current) : vaultHash();
+  }
   // Ctrl+F: in the graph, the Highlight search (lights up the matching note's path); on the documents page,
   // its note search. In a note it stays the browser's own find.
   else if ((e.ctrlKey || e.metaKey) && k === 'f' && (state.view === 'graph' || state.view === 'docs')) {
