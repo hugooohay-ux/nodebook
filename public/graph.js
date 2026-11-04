@@ -445,35 +445,34 @@ const Graph = (() => {
 
   // Two lines leaving the same note almost on top of each other (under ~10° apart): returns the pairs of
   // far ends, e.g. [[Mars, Mercury]] when Inner planets' lines to them nearly coincide
-  function bunchedLines() {
+  function bunchedAt(n) {
     const out = [];
-    for (const n of nodes) {
-      const ns = nbrsOf(n);
-      if (ns.length < 2) continue;
-      const angs = ns.map((m) => [Math.atan2(m.y - n.y, m.x - n.x), m]).sort((a, b) => a[0] - b[0]);
-      for (let i = 0; i < angs.length; i++) {
-        const j = (i + 1) % angs.length;
-        const gap = j ? angs[j][0] - angs[i][0] : angs[0][0] + 2 * Math.PI - angs[i][0];
-        if (gap < 0.18) out.push([angs[i][1], angs[j][1]]);
-      }
+    const ns = nbrsOf(n);
+    if (ns.length < 2) return out;
+    const angs = ns.map((m) => [Math.atan2(m.y - n.y, m.x - n.x), m]).sort((a, b) => a[0] - b[0]);
+    for (let i = 0; i < angs.length; i++) {
+      const j = (i + 1) % angs.length;
+      const gap = j ? angs[j][0] - angs[i][0] : angs[0][0] + 2 * Math.PI - angs[i][0];
+      if (gap < 0.18) out.push([angs[i][1], angs[j][1]]);
     }
     return out;
   }
+  const tightGaps = (n) => bunchedAt(n).length;
+  function bunchedLines() {
+    return nodes.flatMap(bunchedAt);
+  }
 
   // A note's label (drawn under it) covering another note
+  function labelCovers(m, n) {
+    const half = m.labelW / 2;
+    const y0 = m.y + radius(m) + 2;
+    const cx = Math.max(m.x - half, Math.min(n.x, m.x + half));
+    const cy = Math.max(y0, Math.min(n.y, y0 + 13));
+    return Math.hypot(n.x - cx, n.y - cy) < radius(n) + 2;
+  }
   function labelsOnNotes() {
     const out = [];
-    for (const m of nodes) {
-      const half = m.labelW / 2;
-      const y0 = m.y + radius(m) + 2;
-      const y1 = y0 + 13;
-      for (const n of nodes) {
-        if (n === m) continue;
-        const cx = Math.max(m.x - half, Math.min(n.x, m.x + half));
-        const cy = Math.max(y0, Math.min(n.y, y1));
-        if (Math.hypot(n.x - cx, n.y - cy) < radius(n) + 2) out.push([m, n]);
-      }
-    }
+    for (const m of nodes) for (const n of nodes) if (n !== m && labelCovers(m, n)) out.push([m, n]);
     return out;
   }
 
@@ -490,6 +489,58 @@ const Graph = (() => {
         const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
         if (t > 0 && t < 1 && Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 6) k++;
       }
+    }
+    return k;
+  }
+
+  // The part of overlaps() that involves the notes in S: every crossing, squeeze, near-overlap, covered note or
+  // line through a note that has at least one of them in it. When only S moves, the rest of overlaps() can't
+  // change, so overlaps() after a move = before − localOverlaps(S) before + localOverlaps(S) after.
+  // Much cheaper than re-checking the whole graph for every spot the repair tries.
+  function localOverlaps(S) {
+    let k = 0;
+    const touched = [];
+    const isT = new Array(edges.length);
+    for (let i = 0; i < edges.length; i++) {
+      isT[i] = S.has(edges[i][0]) || S.has(edges[i][1]);
+      if (isT[i]) touched.push(i);
+    }
+    // lines crossing (each pair once)
+    for (const i of touched) {
+      const [p, q] = edges[i];
+      for (let j = 0; j < edges.length; j++) {
+        if (j === i || (isT[j] && j < i)) continue;
+        const [r, s] = edges[j];
+        if (p !== r && p !== s && q !== r && q !== s && segmentsCross(p, q, r, s)) k++;
+      }
+    }
+    // notes squeezed together (each pair once)
+    for (const p of S) {
+      for (const q of nodes) {
+        if (q === p || (S.has(q) && q.id < p.id)) continue;
+        if (Math.hypot(p.x - q.x, p.y - q.y) < radius(p) + radius(q) + 16) k++;
+      }
+    }
+    // a line through a note: lines of S × all notes, other lines × notes of S
+    const through = (p, q, m) => {
+      if (m === p || m === q) return false;
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const len2 = dx * dx + dy * dy || 1;
+      const t = ((m.x - p.x) * dx + (m.y - p.y) * dy) / len2;
+      return t > 0 && t < 1 && Math.hypot(m.x - (p.x + t * dx), m.y - (p.y + t * dy)) < radius(m) + 6;
+    };
+    for (let i = 0; i < edges.length; i++) {
+      const [p, q] = edges[i];
+      for (const m of isT[i] ? nodes : S) if (through(p, q, m)) k++;
+    }
+    // lines almost on top of each other, at the notes whose lines moved
+    const at = new Set(S);
+    for (const n of S) for (const m of nbrsOf(n)) at.add(m);
+    for (const n of at) k += tightGaps(n);
+    // labels covering notes
+    for (const m of nodes) {
+      for (const n of S.has(m) ? nodes : S) if (n !== m && labelCovers(m, n)) k++;
     }
     return k;
   }
@@ -666,7 +717,10 @@ const Graph = (() => {
     const evaluate = minimal ? () => overlaps() * 1000 : repairScore;
     const moveCost = minimal ? 2 : 0.01; // per pixel moved
     let score = evaluate();
-    const clean = minimal ? () => overlaps() === 0 : () => untidiness() < 0.5;
+    let count = minimal ? score / 1000 : 0; // overlaps right now (minimal mode)
+    // score with only the notes in S moved, given before = localOverlaps(S) before they moved (fast)
+    const scoreMoved = (S, before) => (minimal ? (count - before + localOverlaps(S)) * 1000 : repairScore());
+    const clean = minimal ? () => count === 0 : () => untidiness() < 0.5;
     // End notes first; only if that isn't enough, notes with more links
     for (const maxLinks of [1, 2, 3, Infinity]) {
       let improved = true;
@@ -689,6 +743,8 @@ const Graph = (() => {
           let bestPos = null;
           let bestAnchor = null;
           let best = score;
+          const moving = new Set([n, ...tagAlong]);
+          const before = minimal ? localOverlaps(moving) : 0;
           // Try spots around each note it links to: small turns from where it is now first (same distance,
           // so the shape holds), then the full circle at normal link length and its current distance
           for (const anchor of anchors) {
@@ -700,7 +756,7 @@ const Graph = (() => {
             for (const [r, a] of spots) {
               if (performance.now() > until) break; // big vaults: stop on time, keep the best spot so far
               moveTo(anchor.x + r * Math.cos(a), anchor.y + r * Math.sin(a));
-              const s = evaluate() + Math.hypot(n.x - ox, n.y - oy) * moveCost * (1 + tagAlong.length);
+              const s = scoreMoved(moving, before) + Math.hypot(n.x - ox, n.y - oy) * moveCost * (1 + tagAlong.length);
               if (s < best - 0.5) {
                 best = s;
                 bestPos = [n.x, n.y];
@@ -710,15 +766,22 @@ const Graph = (() => {
           }
           moveTo(ox, oy);
           // Moving one note alone can't always fix it (e.g. two linked siblings on either side of a line).
-          // So also try swinging its whole branch — everything hanging off it on the far side of `anchor` —
-          // round the anchor as one rigid piece, which keeps the branch's own shape.
+          // So also try moving a whole branch as one rigid piece, which keeps the branch's own shape: the branch
+          // hanging off this note, and one level up, the branch its linked notes hang in (e.g. a whole cluster
+          // that's in the way of a note dropped into it).
           let bestTurn = null;
           if (!bestPos || best > 0.5) {
-            for (const anchor of anchors) {
-              const branch = branchFrom(n, anchor);
+            const pairs = anchors.map((a) => [n, a]);
+            for (const a of anchors) if (free(a)) for (const b of nbrsOf(a)) if (b !== n) pairs.push([a, b]);
+            for (const [root, anchor] of pairs) {
+              const branch = branchFrom(root, anchor);
               if (!branch || branch.length < 2) continue;
               const start = branch.map((m) => [m.x, m.y]);
-              const r0 = Math.hypot(ox - anchor.x, oy - anchor.y);
+              const rx = root.x;
+              const ry = root.y;
+              const r0 = Math.hypot(rx - anchor.x, ry - anchor.y);
+              const group = new Set(branch);
+              const before = minimal ? localOverlaps(group) : 0;
               for (const deg of [20, -20, 40, -40, 60, -60, 90, -90, 120, -120, 150, -150, 180]) {
                 if (performance.now() > until) break;
                 const a = (deg * Math.PI) / 180;
@@ -731,10 +794,26 @@ const Graph = (() => {
                   m.y = anchor.y + dx * sin + dy * cos;
                 });
                 // cost of the swing: how far the branch's root travels, a bit more for bigger branches
-                const s = evaluate() + r0 * Math.abs(a) * moveCost * (1 + Math.sqrt(branch.length) / 2);
+                const s = scoreMoved(group, before) + r0 * Math.abs(a) * moveCost * (1 + Math.sqrt(branch.length) / 2);
                 if (s < best - 0.5) {
                   best = s;
                   bestTurn = { branch, pos: branch.map((m) => [m.x, m.y]), anchor };
+                }
+              }
+              // …or slide the whole branch, unchanged, to another spot round the anchor (e.g. out of the way of
+              // a note dropped in the middle of it)
+              for (const r of [r0, settings.dist * 1.5, r0 * 1.6]) {
+                for (let s16 = 0; s16 < 16; s16++) {
+                  if (performance.now() > until) break;
+                  const a = (s16 / 16) * Math.PI * 2;
+                  const dx = anchor.x + r * Math.cos(a) - rx;
+                  const dy = anchor.y + r * Math.sin(a) - ry;
+                  branch.forEach((m, i) => { m.x = start[i][0] + dx; m.y = start[i][1] + dy; });
+                  const s = scoreMoved(group, before) + Math.hypot(dx, dy) * moveCost * (1 + Math.sqrt(branch.length) / 2);
+                  if (s < best - 0.5) {
+                    best = s;
+                    bestTurn = { branch, pos: branch.map((m) => [m.x, m.y]), anchor };
+                  }
                 }
               }
               branch.forEach((m, i) => { [m.x, m.y] = start[i]; });
@@ -746,12 +825,14 @@ const Graph = (() => {
               swingsAround.set(m.id, bestTurn.anchor.id); // the whole branch swings round the anchor together
             });
             score = evaluate();
+            if (minimal) count = score / 1000;
             improved = true;
           } else if (bestPos) {
             moveTo(...bestPos);
             swingsAround.set(n.id, bestAnchor.id);
             for (const m of tagAlong) swingsAround.set(m.id, n.id); // its end notes ride along with it
             score = evaluate();
+            if (minimal) count = score / 1000;
             improved = true;
           }
           if (clean() || performance.now() > until) break;
@@ -1290,6 +1371,16 @@ const Graph = (() => {
         labelsOnNotes: labelsOnNotes().map(([a, b]) => `${a.label} label on ${b.label}`),
         trouble: troubleNotes(true).map((n) => n.label),
       };
+    },
+    // Jump every running animation to its end (for tests: background tabs don't run animations)
+    finishAnimations() {
+      for (const n of nodes) {
+        if (!n.anim) continue;
+        n.x = n.anim.gx;
+        n.y = n.anim.gy;
+        n.anim = null;
+        positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+      }
     },
     layout() {
       const now = nodes.map((n) => [n, n.x, n.y]);
