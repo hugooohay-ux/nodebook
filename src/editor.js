@@ -413,6 +413,9 @@ window.NoteEditor = {
       markdown({ base: markdownLanguage }),
       syntaxHighlighting(highlight),
       EditorView.lineWrapping,
+      // Spell checking like Obsidian: misspelled words get the browser's red squiggle, and right-clicking one
+      // shows suggestions. Uses the spell-check languages set in the browser (e.g. Swedish + English).
+      EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences' }),
       placeholder(opts.placeholder || ''),
       autocompletion({ override: [linkCompletions(opts)], icons: false }),
       livePreview(opts),

@@ -20,7 +20,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 ## Features
 
 - Home screen with every vault as a card (live graph thumbnail, note count, last opened); rename, export, delete; templates; import a `.zip` as a new vault
-- Markdown editor with Edit / Read modes and autosave
+- Markdown editor with Edit / Read modes and autosave. Spell checking like Obsidian: misspelled words are
+  underlined and right-click shows suggestions (uses the spell-check languages set in your browser)
 - `[[Note]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`. To show other text than the note's
   name: `[[Note, "shown text"]]` or `[[Note|shown text]]` (renaming the note keeps the shown text)
 - Clicking a link to a note that doesn't exist creates it
@@ -72,7 +73,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 | Ctrl+Alt+0–3 | Normal text / Heading 1–3 |
 | Ctrl+Shift+7 / 8 / 9 | Numbered list / bulleted list / checklist |
 | Ctrl+P / Ctrl+O | Search notes |
-| Ctrl+G | Graph view; from the graph, back to the note you were on |
+| Ctrl+G | Graph view (the note you came from is lit until you hover another); from the graph, back to that note |
 | Ctrl+F | In the graph: Highlight search (lights up a note's path), Esc clears. On the documents page: note search |
 | Ctrl+E | Toggle edit / read |
 | Ctrl+S | Save now |
