@@ -40,6 +40,9 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Note size = how much sits below a note along its links
 - Renaming a note updates every link to it across the vault (all link forms, and "Related to")
 - Deleting a note turns links to it into plain text, so nothing is left pointing at a note that's gone
+- Graph: hold right-click and drag to draw a box; every note inside gets selected (Ctrl/Shift adds to the
+  selection). Name a group in the Groups panel, or right-click a selected note → Group…, to group them all.
+  Click empty space or press Esc to clear. A plain right-click on a note still opens its menu.
 - Notes panel: Ctrl-click to pick several notes, Shift-click to pick everything in between. Drag or right-click
   them to move them into a folder together, or press Delete to delete them; Esc clears the selection
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.

@@ -416,7 +416,7 @@ function renderGroupLegend() {
           <button class="g-del" title="Delete group">×</button>
         </li>`)
         .join('')
-    : '<li class="none">Right-click a note → Group… to make one</li>';
+    : '<li class="none">Hold right-click and drag over notes to select them, then name a group here. Or right-click a note → Group…</li>';
 }
 $('#g-groups').addEventListener('click', async (e) => {
   const li = e.target.closest('li[data-id]');
@@ -1215,7 +1215,34 @@ $('#file-list').addEventListener('click', (e) => {
 function renderSelection() {
   document.querySelectorAll('#file-list li.note').forEach((x) => x.classList.toggle('selected', state.selected.has(x.dataset.path)));
   $('#sidebar').classList.toggle('selecting', state.selected.size > 1);
+  renderGroupSelection();
 }
+
+// Groups panel in the graph: with notes selected, a box to put them all in a new or existing group
+function renderGroupSelection() {
+  const n = state.selected.size;
+  $('#g-sel').hidden = !n;
+  if (!n) return;
+  $('#g-sel-count').textContent = `${n} note${n === 1 ? '' : 's'} selected`;
+  $('#g-sel-list').innerHTML = state.groups.list.map((g) => `<option value="${escapeHtml(g.name)}"></option>`).join('');
+}
+async function groupSelection(name) {
+  name = name.trim();
+  if (!name || !state.selected.size) return;
+  const g = state.groups.list.find((x) => x.name.toLowerCase() === name.toLowerCase()) || createGroup(name);
+  const paths = [...state.selected];
+  await setGroup(paths, g.id);
+  toast(`${notesLabel(paths)} ${paths.length === 1 ? 'is' : 'are'} in ${g.name}`);
+  $('#g-sel-name').value = '';
+  clearSelection();
+}
+$('#g-sel-name').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') groupSelection(e.target.value);
+  else if (e.key === 'Escape') clearSelection();
+});
+$('#g-sel-add').addEventListener('click', () => groupSelection($('#g-sel-name').value));
+$('#g-sel-clear').addEventListener('click', () => clearSelection());
 function clearSelection() {
   if (!state.selected.size) return;
   state.selected.clear();
@@ -1227,7 +1254,7 @@ $('#file-list').addEventListener('mousedown', (e) => {
 });
 // With several notes selected: Esc clears the selection, Delete removes them (after asking)
 document.addEventListener('keydown', (e) => {
-  if (state.selected.size < 2 || e.target.closest('#editor, input, textarea, [contenteditable="true"]')) return;
+  if (!state.selected.size || e.target.closest('#editor, input, textarea, [contenteditable="true"]')) return;
   if (e.key === 'Escape') clearSelection();
   else if (e.key === 'Delete') {
     e.preventDefault();
@@ -1414,10 +1441,12 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, related: state.ups, critical: state.critical, groups: state.groups, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, related: state.ups, critical: state.critical, groups: state.groups, current: state.current, selected: state.selected }),
+  onSelectionChange: () => renderSelection(),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
-  onGroupMenu: (node, x, y) => openGroupMenu(node.id, x, y),
+  // right-click → Group… on a selected note groups all the selected notes
+  onGroupMenu: (node, x, y) => openGroupMenu(state.selected.has(node.id) && state.selected.size > 1 ? [...state.selected] : node.id, x, y),
 });
 
 // Routes: #/ (all vaults), #/v/<vault> (its documents), #/v/<vault>/graph, #/v/<vault>/n/<note path>

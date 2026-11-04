@@ -12,6 +12,8 @@ const Graph = (() => {
   let lastFrame = 0;
   let fade = 0; // 0..1, how strongly the rest of the graph is dimmed around the focused node
   let chain = null; // Map id -> steps below the hovered node
+  let box = null; // right-drag selection box, in screen coordinates
+  let boxed = false; // the last right-click was a box selection (so no menu)
   let searchFor = null; // the search the best match was picked for
   let searchNodes = null;
   let searchHit = null; // the note whose chain the search lights up
@@ -1102,6 +1104,7 @@ const Graph = (() => {
     ctx.setTransform(dpr * cam.k, 0, 0, dpr * cam.k, dpr * (w / 2 + cam.x), dpr * (h / 2 + cam.y));
 
     const q = settings.filter.toLowerCase();
+    const selNow = selection();
     // Searching lights up the best-matching note's whole chain, as if it were hovered (hovering still wins):
     // an exact name first, then a name starting with the search, then the biggest note containing it
     if (searchFor !== q || searchNodes !== nodes) {
@@ -1272,6 +1275,17 @@ const Graph = (() => {
         ctx.arc(n.x, n.y, r + 4 / cam.k, 0, Math.PI * 2);
         ctx.stroke();
       }
+      // Selected (box-select or Ctrl/Shift-click in the notes panel): a dashed ring
+      if (selNow.has(n.id)) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = COLORS.accent;
+        ctx.lineWidth = 2 / cam.k;
+        ctx.setLineDash([4 / cam.k, 3 / cam.k]);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 6 / cam.k, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
 
       // Expanding ripple rings around the hovered node
       if (n.hot > 0.01 && !reducedMotion.matches) {
@@ -1308,6 +1322,19 @@ const Graph = (() => {
       ctx.strokeText(n.label, n.x, ly);
       ctx.fillStyle = COLORS.label;
       ctx.fillText(n.label, n.x, ly);
+    }
+    // The selection box while right-dragging (screen coordinates)
+    if (box) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const x = Math.min(box.x0, box.x1);
+      const y = Math.min(box.y0, box.y1);
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = COLORS.accent;
+      ctx.fillRect(x, y, Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0));
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = COLORS.accent;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0));
     }
     ctx.globalAlpha = 1;
   }
@@ -1351,8 +1378,31 @@ const Graph = (() => {
     return best;
   }
 
+  // The selection is shared with the notes panel (the app's set of selected note paths)
+  const selection = () => opts.getData().selected || new Set();
+  // Selects every note inside the screen rectangle; Ctrl/Shift adds to what's already selected
+  function selectInBox(b, add) {
+    const sel = selection();
+    if (!add) sel.clear();
+    const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+    const { w, h } = size();
+    for (const n of nodes) {
+      if (n.unresolved) continue;
+      const sx = n.x * cam.k + w / 2 + cam.x;
+      const sy = n.y * cam.k + h / 2 + cam.y;
+      if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) sel.add(n.id);
+    }
+    opts.onSelectionChange?.();
+  }
+
   function bind() {
     canvas.addEventListener('pointerdown', (e) => {
+      // Hold right-click and drag: a selection box
+      if (e.button === 2) {
+        const p = toWorld(e);
+        box = { x0: p.sx, y0: p.sy, x1: p.sx, y1: p.sy, add: e.ctrlKey || e.shiftKey || e.metaKey, moved: false };
+        return;
+      }
       if (e.button !== 0) return; // only the main button drags or opens; right-click is handled by contextmenu
       const p = toWorld(e);
       const n = hit(p);
@@ -1368,6 +1418,12 @@ const Graph = (() => {
     window.addEventListener('pointermove', (e) => {
       if (!visible) return;
       const p = toWorld(e);
+      if (box) {
+        box.x1 = p.sx;
+        box.y1 = p.sy;
+        if (Math.hypot(box.x1 - box.x0, box.y1 - box.y0) > 5) box.moved = true;
+        return;
+      }
       if (drag?.node) {
         drag.node.x = p.x;
         drag.node.y = p.y;
@@ -1381,9 +1437,19 @@ const Graph = (() => {
       }
     });
     window.addEventListener('pointerup', (e) => {
+      if (box) {
+        if (box.moved) {
+          selectInBox(box, box.add);
+          boxed = true; // the right-click menu that follows shouldn't open
+        }
+        box = null;
+        return;
+      }
       if (!drag) return;
       const p = toWorld(e);
       const clicked = downAt && Math.hypot(p.sx - downAt.sx, p.sy - downAt.sy) < 4;
+      // a plain click on empty space clears the selection
+      if (drag.pan && clicked && selection().size) { selection().clear(); opts.onSelectionChange?.(); }
       if (drag.node && clicked) opts.onOpen(drag.node);
       else if (drag.node?.pinned) setPin(drag.node, true); // moved a pinned note: pin it at its new spot
       else if (drag.node) {
@@ -1401,10 +1467,11 @@ const Graph = (() => {
     canvas.addEventListener('pointerleave', () => { if (!drag) hover = null; });
     // Right-click a note: open it, or let a placed note float again
     canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); // no browser menu on the graph (right-drag draws a selection box)
+      if (boxed) { boxed = false; return; } // that right-click was a box selection
+      if (box?.moved) return;
       const n = hit(toWorld(e));
-      if (!n) return;
-      e.preventDefault();
-      showNodeMenu(n, e.clientX, e.clientY);
+      if (n) showNodeMenu(n, e.clientX, e.clientY);
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();

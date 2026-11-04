@@ -122,6 +122,14 @@
         <button id="g-fit">Fit to view</button>
         <button id="g-unpin" title="Drop pins and moved notes, and find a clean layout again">Reset layout</button>
         <div class="g-groups-head">Groups</div>
+        <div id="g-sel" hidden>
+          <div class="g-sel-top"><span id="g-sel-count"></span><button id="g-sel-clear" title="Clear the selection (Esc)">Clear</button></div>
+          <div class="g-sel-row">
+            <input id="g-sel-name" list="g-sel-list" placeholder="New or existing group…" spellcheck="false">
+            <datalist id="g-sel-list"></datalist>
+            <button id="g-sel-add">Group</button>
+          </div>
+        </div>
         <ul id="g-groups"></ul>
         <label title="Notes in the same group drift towards each other"><input type="checkbox" id="g-pull" checked> Pull groups together</label>
       </div>
