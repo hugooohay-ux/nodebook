@@ -60,12 +60,13 @@ class LinkWidget extends WidgetType {
 // ---------- "Part of" properties: managed by the app's Part-of bar, hidden in the editor ----------
 const FRONT_RE = /^---\n([\s\S]*?)\n---(?=\n|$)/;
 
-// End of a properties block holding only `up:` (other imported properties stay visible and editable)
+// End of a properties block holding only the app's own properties — "Related to" (`related:`, or the older
+// `up:`) and `critical:`, which are set from the bar above the note. Other imported properties stay visible.
 function hiddenEnd(text) {
   const m = FRONT_RE.exec(text);
   if (!m) return 0;
-  const onlyUp = m[1].split('\n').every((l) => /^up:/.test(l) || /^\s+-\s/.test(l) || !l.trim());
-  return onlyUp ? m[0].length : 0;
+  const onlyOurs = m[1].split('\n').every((l) => /^(?:up|related|critical):/.test(l) || /^\s+-\s/.test(l) || !l.trim());
+  return onlyOurs ? m[0].length : 0;
 }
 
 const hidePropsField = StateField.define({

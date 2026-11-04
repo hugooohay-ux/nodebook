@@ -7,6 +7,7 @@ const state = {
   notes: new Map(), // path -> { path, name, content, mtime }
   links: new Map(), // path -> [{ target, resolved }]
   ups: new Map(), // path -> Set of paths it's "Related to"
+  critical: new Map(), // path -> path of its "Critical" note
   groups: { list: [], members: {} }, // coloured groups for this vault
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
@@ -92,6 +93,40 @@ function parseUps(content) {
   return [...new Set(out.filter(Boolean))];
 }
 
+// ---------- "Critical" ----------
+// One note a note's chain must go through on its way up (stored as `critical: "[[Note]]"` in the properties).
+function parseCritical(content) {
+  const m = FRONT_RE.exec(content);
+  if (!m) return null;
+  const lines = m[1].split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const key = /^critical:\s*(.*)$/.exec(lines[i]);
+    if (!key) continue;
+    const values = key[1] ? [key[1]] : [];
+    while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) values.push(lines[++i]);
+    for (const v of values) for (const l of v.matchAll(LINK_RE)) return parseLink(l[1]).target || null;
+  }
+  return null;
+}
+// The edit that sets (or with null, removes) a note's critical note; other properties are kept
+function criticalEdit(content, name) {
+  const m = FRONT_RE.exec(content);
+  const rest = [];
+  if (m) {
+    const lines = m[1].split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (/^critical:/.test(lines[i])) {
+        while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) i++;
+        continue;
+      }
+      if (lines[i].trim()) rest.push(lines[i]);
+    }
+  }
+  const body = [...rest, ...(name ? [`critical: "[[${name}]]"`] : [])];
+  const to = m ? m[0].length + (content[m[0].length] === '\n' ? 1 : 0) : 0;
+  return { from: 0, to, insert: body.length ? `---\n${body.join('\n')}\n---\n` : '' };
+}
+
 // The edit that sets a note's "Related to" list to `names` (other properties are kept)
 function upsEdit(content, names) {
   const m = FRONT_RE.exec(content);
@@ -140,6 +175,13 @@ function rebuildIndex() {
       out.push({ target, resolved });
     }
     state.links.set(n.path, out);
+  }
+
+  // Each note's "Critical" note, as a resolved path
+  state.critical.clear();
+  for (const n of state.notes.values()) {
+    const c = resolve(parseCritical(n.content));
+    if (c && c !== n.path) state.critical.set(n.path, c);
   }
 
   // What each note is "Related to", as resolved paths
@@ -404,7 +446,38 @@ function renderPartOf() {
     .map((n) => `<span class="po-chip${resolve(n) ? '' : ' unresolved'}"><a href="#" data-open="${escapeHtml(n)}" title="Open “${escapeHtml(n)}”">${escapeHtml(n)}</a><button data-remove="${escapeHtml(n)}" title="Remove from Related to">×</button></span>`)
     .join('');
   $('#partof').classList.toggle('empty', !ups.length);
+  renderCritical();
 }
+
+// The "Critical" picker: any note this one is linked with (either way), or none
+function renderCritical() {
+  const note = state.notes.get(state.current);
+  if (!note) return;
+  const cur = state.current;
+  const linked = new Set();
+  for (const l of state.links.get(cur) || []) if (l.resolved && l.resolved !== cur) linked.add(l.resolved);
+  for (const [p, links] of state.links) if (p !== cur && links.some((l) => l.resolved === cur)) linked.add(p);
+  const chosen = state.critical.get(cur) || '';
+  if (chosen) linked.add(chosen);
+  const sel = $('#crit-select');
+  sel.innerHTML =
+    `<option value="">${linked.size ? 'None' : 'No linked notes'}</option>` +
+    [...linked]
+      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+      .map((p) => `<option value="${escapeHtml(p)}"${p === chosen ? ' selected' : ''}>${escapeHtml(nameOf(p))}</option>`)
+      .join('');
+  sel.disabled = !linked.size;
+  sel.classList.toggle('set', !!chosen);
+}
+$('#crit-select').addEventListener('change', async (e) => {
+  const note = state.notes.get(state.current);
+  if (!note) return;
+  const { from, to, insert } = criticalEdit(note.content, e.target.value ? nameOf(e.target.value) : null);
+  editor.replaceRange(from, to, insert); // saved and undoable like typing
+  await flushSave();
+  renderPartOf();
+  toast(e.target.value ? `Chains from “${note.name}” now go through “${nameOf(e.target.value)}”` : 'No critical note');
+});
 
 async function setParents(names) {
   const note = state.notes.get(state.current);
@@ -642,7 +715,12 @@ function unlinkFrom(gone) {
   const changed = new Map();
   for (const n of state.notes.values()) {
     if (gone.has(n.path)) continue;
-    let content = outsideCode(n.content, (part) =>
+    let content = n.content;
+    if (gone.has(resolve(parseCritical(content)))) {
+      const { from, to, insert } = criticalEdit(content, null);
+      content = content.slice(0, from) + insert + content.slice(to);
+    }
+    content = outsideCode(content, (part) =>
       part.replace(LINK_RE, (m, inner) => {
         const l = parseLink(inner);
         return gone.has(resolve(l.target)) ? l.alias || l.raw : m;
@@ -1335,7 +1413,7 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, related: state.ups, groups: state.groups, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, related: state.ups, critical: state.critical, groups: state.groups, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
   onGroupMenu: (node, x, y) => openGroupMenu(node.id, x, y),

@@ -42,7 +42,7 @@ const Graph = (() => {
 
   // ---------- data ----------
   function rebuild() {
-    const { notes, links, related, groups, current } = opts.getData();
+    const { notes, links, related, critical, groups, current } = opts.getData();
     const map = new Map();
     // fwd/bwd: links written in the text (fwd = notes this one links to) — the hover chain follows these.
     // linked: "Related to" connections — hovering lights them one step, never further.
@@ -71,6 +71,12 @@ const Graph = (() => {
         map.get(id).bwd.add(src);
         connect(src, id);
       }
+    }
+    // "Critical": the one note this note's chain must go through on its way up
+    for (const [a, c] of critical || []) {
+      if (!map.has(a) || !map.has(c)) continue;
+      map.get(a).critical = c;
+      connect(a, c);
     }
     for (const [a, rs] of related || []) {
       if (!map.has(a)) continue;
@@ -107,6 +113,9 @@ const Graph = (() => {
     for (const n of keep) n.group = groupList.get(groups?.members?.[n.id]) || null;
 
     byId = new Map(keep.map((n) => [n.id, n]));
+    // notes that have each note as their critical note
+    for (const n of keep) n.critKids = [];
+    for (const n of keep) if (byId.has(n.critical)) byId.get(n.critical).critKids.push(n);
 
     // Which way is "down" the link chains: whichever direction has the clearest top note, so it works whether
     // a topic links to its subtopics (Associationsrätt → [[Bolagsformer]]) or the subtopics link back up to it.
@@ -131,21 +140,22 @@ const Graph = (() => {
 
     // Distance to the top: the fewest link steps down from a top note (one with nothing above it).
     // Hover chains only climb to notes closer to the top, so they never take a detour.
+    // A note with a critical note only gets its distance through that note.
     for (const n of keep) n.top = Infinity;
-    let ring = keep.filter((n) => ![...n.up].some((id) => id !== n.id && byId.has(id)));
+    let ring = keep.filter((n) => !byId.has(n.critical) && ![...n.up].some((id) => id !== n.id && byId.has(id)));
     if (!ring.length && keep.length) ring = [keep.reduce((a, b) => (b.below > a.below ? b : a))]; // everything in a loop
     for (const n of ring) n.top = 0;
     while (ring.length) {
       const next = [];
       for (const n of ring) {
-        for (const id of n.down) {
-          const m = byId.get(id);
-          if (m && m.top === Infinity) { m.top = n.top + 1; next.push(m); }
+        for (const m of below1(n)) {
+          if (m.top === Infinity && !stopsAt(m, n)) { m.top = n.top + 1; next.push(m); }
         }
       }
       ring = next;
     }
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
+    for (const e of edges) e.crit = e[0].critical === e[1].id || e[1].critical === e[0].id; // drawn stronger when lit
     nodes = keep;
 
     let added = false;
@@ -169,19 +179,33 @@ const Graph = (() => {
     if (added) alpha = Math.max(alpha, 0.3); // let newcomers settle in; otherwise stay still
   }
 
-  // Notes reachable from `start` by following links in one direction only ('down' or 'up'), with steps away
+  // The notes one step below n: the notes its links go down to, plus notes that have n as their critical note.
+  // A note whose critical note is someone else is still reached (one step), but see `walk` for where it stops.
+  function below1(n) {
+    const out = [];
+    for (const id of n.down) { const m = byId.get(id); if (m) out.push(m); }
+    for (const m of n.critKids || []) if (!n.down.has(m.id)) out.push(m);
+    return out;
+  }
+  // Reached from someone other than its critical note: the chain lights it but doesn't go on below it
+  const stopsAt = (m, from) => byId.has(m.critical) && m.critical !== from.id;
+
+  // Notes reachable from `start` by following links in one direction only ('down' or 'up'), with steps away.
+  // Going down, a note that belongs under a different (critical) note is reached but not gone through.
   function walk(start, dir) {
     const depth = new Map([[start.id, 0]]);
+    const through = new Set([start.id]); // notes the walk has gone on through
     let frontier = [start];
     while (frontier.length) {
       const next = [];
       for (const n of frontier) {
-        for (const id of n[dir]) {
-          const m = byId.get(id);
-          if (m && !depth.has(id)) {
-            depth.set(id, depth.get(n.id) + 1);
-            next.push(m);
-          }
+        const step = dir === 'down' ? below1(n) : [...n[dir]].map((id) => byId.get(id)).filter(Boolean);
+        for (const m of step) {
+          if (!depth.has(m.id)) depth.set(m.id, depth.get(n.id) + 1);
+          if (through.has(m.id) || (dir === 'down' && stopsAt(m, n))) continue;
+          // (reached first by a shortcut, it still goes on once its critical note arrives)
+          through.add(m.id);
+          next.push(m);
         }
       }
       frontier = next;
@@ -201,7 +225,7 @@ const Graph = (() => {
     const below = walk(start, 'down');
     const above = new Map([[start.id, 0]]);
     const upEdges = new Set(); // the steps actually taken going up: "lower\nhigher"
-    for (const id of start.up) {
+    for (const id of [...start.up, ...(byId.has(start.critical) ? [start.critical] : [])]) {
       if (!byId.has(id) || id === start.id) continue;
       above.set(id, 1);
       upEdges.add(start.id + '\n' + id);
@@ -210,9 +234,13 @@ const Graph = (() => {
     while (ring.length) {
       const next = [];
       for (const n of ring) {
-        for (const id of n.up) {
+        // a note with a critical note goes up through that note only, whatever the distances
+        const forced = byId.has(n.critical);
+        for (const id of forced ? [n.critical] : n.up) {
           const m = byId.get(id);
-          if (!m || !(m.top < n.top)) continue; // only ever closer to the top
+          if (!m || above.get(m.id) === 0) continue;
+          if (!forced && !(m.top < n.top)) continue; // otherwise only ever closer to the top
+          if (forced && above.has(m.id) && above.get(m.id) <= above.get(n.id)) { upEdges.add(n.id + '\n' + m.id); continue; } // a loop
           upEdges.add(n.id + '\n' + m.id);
           const d = above.get(n.id) + 1;
           if (!above.has(m.id) || (above.get(m.id) > d && m.id !== start.id)) above.set(m.id, d);
@@ -1062,8 +1090,8 @@ const Graph = (() => {
             // only the steps the chain actually took on its way up
             if (c.upEdges.has(p.id + '\n' + r.id)) [e.from, e.to] = [p, r];
             else if (c.upEdges.has(r.id + '\n' + p.id)) [e.from, e.to] = [r, p];
-          } else if (p[dir].has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
-          else if (r[dir].has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
+          } else if ((p.down.has(r.id) || r.critical === p.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
+          else if ((r.down.has(p.id) || p.critical === r.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
           if (e.to) break;
         }
         // a "Related to" connection of the hovered note lights just that one line
@@ -1116,9 +1144,9 @@ const Graph = (() => {
       const a = e.from;
       const b = e.to;
       const hs = segment(a, b);
-      ctx.globalAlpha = on * 0.9;
+      ctx.globalAlpha = on * (e.crit ? 1 : 0.9);
       ctx.strokeStyle = ctx.fillStyle = COLORS.edgeHi;
-      ctx.lineWidth = (1 + on * 1.2) / cam.k;
+      ctx.lineWidth = (e.crit ? 1.5 + on * 2.6 : 1 + on * 1.2) / cam.k; // a critical link stands out
       ctx.beginPath();
       ctx.moveTo(hs[0], hs[1]);
       ctx.lineTo(hs[2], hs[3]);
@@ -1488,6 +1516,12 @@ const Graph = (() => {
     // Label of the note under a point on screen, if any
     noteAt(clientX, clientY) {
       return hit(toWorld({ clientX, clientY }))?.label || null;
+    },
+    // The steps up that light up when hovering `id`, as "lower → higher" labels (for checking chains)
+    upSteps(id) {
+      const n = byId.get(id);
+      if (!n) return [];
+      return [...chainFrom(n).upEdges].map((k) => k.split('\n').map((x) => byId.get(x)?.label).join(' → '));
     },
     // Labels of the notes that light up when hovering `id`, in chain order
     chainOf(id) {

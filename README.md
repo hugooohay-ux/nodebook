@@ -33,6 +33,9 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - "Related to": a lighter side connection, set from the bar above each note and stored as `related:`
   properties (older `up:` entries are read too). When hovering it lights up one step only, so
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
+- "★ Critical" (in the same bar): the note a note's chain must go through on its way up, even when another
+  route is shorter (e.g. a shortcut link from a top note). Coming from any other note, the chain reaches the
+  note but doesn't carry on below it. The critical line is drawn thicker when lit. Stored as `critical:`.
 - Note size = how much sits below a note along its links
 - Renaming a note updates every link to it across the vault (all link forms, and "Related to")
 - Deleting a note turns links to it into plain text, so nothing is left pointing at a note that's gone
