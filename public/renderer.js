@@ -449,7 +449,8 @@ function renderPartOf() {
   renderCritical();
 }
 
-// The "Critical" picker: any note this one is linked with (either way), or none
+// The "Critical" picker: any note in the vault (the ones this note is linked with listed first), or none.
+// The chain goes from this note to the critical note first, then on up from there.
 function renderCritical() {
   const note = state.notes.get(state.current);
   if (!note) return;
@@ -458,15 +459,15 @@ function renderCritical() {
   for (const l of state.links.get(cur) || []) if (l.resolved && l.resolved !== cur) linked.add(l.resolved);
   for (const [p, links] of state.links) if (p !== cur && links.some((l) => l.resolved === cur)) linked.add(p);
   const chosen = state.critical.get(cur) || '';
-  if (chosen) linked.add(chosen);
+  const byName = (a, b) => nameOf(a).localeCompare(nameOf(b));
+  const opt = (p) => `<option value="${escapeHtml(p)}"${p === chosen ? ' selected' : ''}>${escapeHtml(nameOf(p))}</option>`;
+  const others = [...state.notes.keys()].filter((p) => p !== cur && !linked.has(p)).sort(byName);
   const sel = $('#crit-select');
   sel.innerHTML =
-    `<option value="">${linked.size ? 'None' : 'No linked notes'}</option>` +
-    [...linked]
-      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
-      .map((p) => `<option value="${escapeHtml(p)}"${p === chosen ? ' selected' : ''}>${escapeHtml(nameOf(p))}</option>`)
-      .join('');
-  sel.disabled = !linked.size;
+    '<option value="">None</option>' +
+    (linked.size ? `<optgroup label="Linked with this note">${[...linked].sort(byName).map(opt).join('')}</optgroup>` : '') +
+    (others.length ? `<optgroup label="All other notes">${others.map(opt).join('')}</optgroup>` : '');
+  sel.disabled = state.notes.size < 2;
   sel.classList.toggle('set', !!chosen);
 }
 $('#crit-select').addEventListener('change', async (e) => {
