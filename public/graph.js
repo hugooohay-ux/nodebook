@@ -128,6 +128,23 @@ const Graph = (() => {
     const lo = Math.min(...keep.map((n) => n.below));
     const hi = Math.max(...keep.map((n) => n.below));
     for (const n of keep) n.size = hi > lo ? (n.below - lo) / (hi - lo) : 0;
+
+    // Distance to the top: the fewest link steps down from a top note (one with nothing above it).
+    // Hover chains only climb to notes closer to the top, so they never take a detour.
+    for (const n of keep) n.top = Infinity;
+    let ring = keep.filter((n) => ![...n.up].some((id) => id !== n.id && byId.has(id)));
+    if (!ring.length && keep.length) ring = [keep.reduce((a, b) => (b.below > a.below ? b : a))]; // everything in a loop
+    for (const n of ring) n.top = 0;
+    while (ring.length) {
+      const next = [];
+      for (const n of ring) {
+        for (const id of n.down) {
+          const m = byId.get(id);
+          if (m && m.top === Infinity) { m.top = n.top + 1; next.push(m); }
+        }
+      }
+      ring = next;
+    }
     edges = es.filter(([a, b]) => byId.has(a) && byId.has(b)).map(([a, b]) => [byId.get(a), byId.get(b)]);
     nodes = keep;
 
@@ -175,28 +192,41 @@ const Graph = (() => {
   // Never sideways: a sibling (reached only by going up and then back down) stays dark.
   // Hovering a note lights, following links written in the text:
   //  - everything below it, directly or further down
-  //  - above it, only the main path to the top: always on through the biggest note. Its other notes above light
-  //    up one step but aren't followed further, so a big web never lights up as a whole
-  // and its "Related to" notes, one step only (Juridisk person lights Rättskapacitet, but hovering Handelsbolag,
-  // which links to Juridisk person, doesn't reach Rättskapacitet)
+  //  - above it, every route to the top where each step gets closer to the top. Several equally good routes all
+  //    light up (Handelsbolag → Bolagsformer and → HandelsbL, both on to Associationsrätt); a detour doesn't
+  //    (Juridisk person climbs through Rättskapacitet, not through Handelsbolag, which is further from the top).
+  //    Notes directly above that aren't closer still light up one step, but the chain doesn't go on through them.
+  // and its "Related to" notes, one step only.
   function chainFrom(start) {
     const below = walk(start, 'down');
     const above = new Map([[start.id, 0]]);
-    for (const id of start.up) if (byId.has(id)) above.set(id, 1);
-    for (let n = start, d = 0; ; ) {
-      const ps = [...n.up].map((id) => byId.get(id)).filter((m) => m && (above.get(m.id) ?? Infinity) > d && !(m.id === start.id));
-      if (!ps.length) break;
-      n = ps.sort((a, b) => b.size - a.size || b.below - a.below || b.deg - a.deg)[0];
-      d += 1;
-      if (above.has(n.id) && above.get(n.id) < d) break; // a loop
-      above.set(n.id, d);
+    const upEdges = new Set(); // the steps actually taken going up: "lower\nhigher"
+    for (const id of start.up) {
+      if (!byId.has(id) || id === start.id) continue;
+      above.set(id, 1);
+      upEdges.add(start.id + '\n' + id);
+    }
+    let ring = [start];
+    while (ring.length) {
+      const next = [];
+      for (const n of ring) {
+        for (const id of n.up) {
+          const m = byId.get(id);
+          if (!m || !(m.top < n.top)) continue; // only ever closer to the top
+          upEdges.add(n.id + '\n' + m.id);
+          const d = above.get(n.id) + 1;
+          if (!above.has(m.id) || (above.get(m.id) > d && m.id !== start.id)) above.set(m.id, d);
+          if (!next.includes(m)) next.push(m);
+        }
+      }
+      ring = next;
     }
     const all = new Map(below);
     for (const [id, d] of above) all.set(id, Math.min(d, all.get(id) ?? Infinity));
     const linked = new Map();
     for (const id of start.linked) if (byId.has(id) && !all.has(id)) linked.set(id, 1);
     for (const [id, d] of linked) all.set(id, d);
-    return { all, below, above, linked };
+    return { all, below, above, linked, upEdges };
   }
 
   // ---------- motion: a calm free-form layout ----------
@@ -1028,7 +1058,11 @@ const Graph = (() => {
           const dp = depth.get(p.id);
           const dr = depth.get(r.id);
           if (dp === undefined || dr === undefined) continue;
-          if (p[dir].has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
+          if (dir === 'up') {
+            // only the steps the chain actually took on its way up
+            if (c.upEdges.has(p.id + '\n' + r.id)) [e.from, e.to] = [p, r];
+            else if (c.upEdges.has(r.id + '\n' + p.id)) [e.from, e.to] = [r, p];
+          } else if (p[dir].has(r.id) && dr >= dp && dr > 0) [e.from, e.to] = [p, r];
           else if (r[dir].has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
           if (e.to) break;
         }

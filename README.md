@@ -26,9 +26,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
 - Links in the text are the main way notes connect. Hovering a note in the graph follows them:
-  everything below it lights up, and above it only the main path to the top (through the biggest notes),
-  plus its other notes directly above. Never sideways: a sibling stays dark. Which way is "down" is worked
-  out from the vault (a topic linking to its subtopics, or the other way round, both work).
+  everything below it lights up, and above it every route to the top where each step gets closer to the top
+  (several equally short routes all light up; detours don't). Notes directly above that aren't closer light up
+  one step only. Never sideways: a sibling stays dark. Which way is "down" is worked out from the vault
+  (a topic linking to its subtopics, or the other way round, both work).
 - "Related to": a lighter side connection, set from the bar above each note and stored as `related:`
   properties (older `up:` entries are read too). When hovering it lights up one step only, so
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
