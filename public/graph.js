@@ -1527,6 +1527,13 @@ const Graph = (() => {
 
     const on = (id, ev, fn) => document.getElementById(id)?.addEventListener(ev, fn);
     on('graph-filter', 'input', (e) => { settings.filter = e.target.value.trim(); });
+    // Esc in the Highlight box: clear it and step out of it
+    on('graph-filter', 'keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.target.value = '';
+      settings.filter = '';
+      e.target.blur();
+    });
     on('g-local', 'change', (e) => { settings.local = e.target.checked; rebuild(); fitPending = true; });
     on('g-depth', 'input', (e) => { settings.depth = +e.target.value; if (settings.local) { rebuild(); fitPending = true; } });
     on('g-unresolved', 'change', (e) => { settings.unresolved = e.target.checked; rebuild(); });

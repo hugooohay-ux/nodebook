@@ -1441,6 +1441,14 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && k === 'n') { e.preventDefault(); newNote(); }
   // Ctrl+G: the vault's graph (or back to its documents when already there)
   else if (e.ctrlKey && k === 'g') { e.preventDefault(); location.hash = state.view === 'graph' ? vaultHash() : `${vaultHash()}/graph`; }
+  // Ctrl+F: in the graph, the Highlight search (lights up the matching note's path); on the documents page,
+  // its note search. In a note it stays the browser's own find.
+  else if ((e.ctrlKey || e.metaKey) && k === 'f' && (state.view === 'graph' || state.view === 'docs')) {
+    e.preventDefault();
+    const box = state.view === 'graph' ? $('#graph-filter') : $('#note-search');
+    box.focus();
+    box.select();
+  }
   else if (e.ctrlKey && (k === 'p' || k === 'o')) {
     e.preventDefault();
     const box = state.view === 'note' ? $('#search') : $('#note-search');
