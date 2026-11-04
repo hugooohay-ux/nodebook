@@ -25,6 +25,7 @@ const Graph = (() => {
   const held = new Set(); // notes dropped somewhere by hand this session (stay put, not saved)
   const guide = new Map(); // while dragging: where notes are gliding to so lines stop overlapping (id -> [x, y])
   let lastLive = 0;
+  let lineLen = 0; // the line length shapes are evened out to: the graph's typical one (follows Repel/Spacing)
   let dragRegion = null; // while dragging: the notes allowed to follow
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
@@ -366,6 +367,7 @@ const Graph = (() => {
   function findCleanLayout(budgetMs = 400, from = null) {
     searchLayout(budgetMs);
     const swings = improve(300);
+    lineLen = typicalLine();
     for (const [id, a] of polish(new Set(nodes), 150, snapshot())) if (!swings.has(id)) swings.set(id, a); // even out the shapes
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     if (from) animateFrom(from, swings);
@@ -598,7 +600,7 @@ const Graph = (() => {
   //    simple, open shapes (triangles, quadrilaterals, fans) rather than slivers
   // `only`: score just these notes and their lines
   function shapeScore(only = null) {
-    const D = settings.dist;
+    const D = lineLen || settings.dist;
     const seen = new Set();
     let s = 0;
     for (const n of only || nodes) {
@@ -627,7 +629,7 @@ const Graph = (() => {
   // only if it improves the shapes there, adds no overlap, and is worth how far the note moves from `origin`.
   function polish(region, budgetMs, origin) {
     const until = performance.now() + budgetMs;
-    const D = settings.dist;
+    const D = lineLen || settings.dist;
     const list = [...region].filter((n) => !isHeld(n) && n.nbrs.size);
     const swings = new Map();
     let base = overlaps();
@@ -688,11 +690,25 @@ const Graph = (() => {
   // move — first anything overlapping is fixed with the smallest moves, then the shapes there are evened out
   // into constellation-like ones. Animated. `dropped`: the note you let go of (none for a slider change —
   // then the whole graph gets the gentle evening-out).
-  function settleAndTidy(dropped = null) {
+  // The graph's typical line length (median), so evening out shapes keeps the spacing it has
+  function typicalLine() {
+    if (!edges.length) return settings.dist;
+    const lens = edges.map(([p, q]) => Math.hypot(q.x - p.x, q.y - p.y)).sort((a, b) => a - b);
+    return lens[Math.floor(lens.length / 2)];
+  }
+
+  // `relax`: first let the physics finish what it's doing (a slider was just moved), so the graph ends up
+  // spread out the way the new setting says instead of stopping halfway
+  function settleAndTidy(dropped = null, relax = false) {
     for (const n of nodes) {
       if (n.anim) { n.x = n.anim.gx; n.y = n.anim.gy; n.anim = null; }
     }
     const from = snapshot();
+    if (relax) {
+      alpha = Math.max(alpha, 0.3);
+      const until = performance.now() + 200;
+      while (alpha > 0.005 && performance.now() < until) tick();
+    }
     for (const [id, [x, y]] of guide) {
       const n = byId.get(id);
       if (n && !isHeld(n)) { n.x = x; n.y = y; n.vx = 0; n.vy = 0; }
@@ -702,6 +718,7 @@ const Graph = (() => {
     alpha = 0; // stop exactly as it is
     const swings = overlaps() ? improve(nodes.length > 60 ? 150 : 400, true) : new Map(); // small vaults: time to fix everything
     const region = dropped ? around(dropped, 2) : new Set(nodes);
+    lineLen = typicalLine();
     for (const [id, a] of polish(region, 90, from)) if (!swings.has(id)) swings.set(id, a);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     // notes already gliding finish with an ease-out, so they don't stop and start again
@@ -1264,7 +1281,8 @@ const Graph = (() => {
     on('g-fit', 'click', fit);
     on('g-pull', 'change', (e) => { settings.pull = e.target.checked; settleAndTidy(); });
     // Letting go of a slider tidies up too, so squeezing or spreading the graph never leaves lines crossing
-    for (const id of ['g-repel', 'g-dist', 'g-size']) on(id, 'change', () => settleAndTidy());
+    // let go of a slider: the graph finishes spreading out to the new setting, then tidies (it doesn't snap back)
+    for (const id of ['g-repel', 'g-dist', 'g-size']) on(id, 'change', () => settleAndTidy(null, true));
     on('g-unpin', 'click', () => {
       // Reset layout: drop pins and drags, then find a clean layout again
       pins.clear();
