@@ -48,10 +48,17 @@ function outsideCode(text, fn) {
 }
 const stripCode = (text) => text.replace(CODE_RE, (m) => m.replace(/[^\n]/g, ' '));
 
+// A link's inside: [[Note]], [[Note#Heading]], or with its own text shown in the note:
+// [[Note|shown text]] or [[Note, "shown text"]] (straight or curly quotes, single or doubled)
+const SHOWN_RE = /^(.*?)\s*,\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
 function parseLink(inner) {
+  let raw = inner;
+  let alias = null;
+  const q = SHOWN_RE.exec(inner);
   const bar = inner.indexOf('|');
-  const raw = bar < 0 ? inner : inner.slice(0, bar);
-  return { target: raw.split('#')[0].trim(), alias: bar < 0 ? null : inner.slice(bar + 1).trim(), raw: raw.trim() };
+  if (q) [raw, alias] = [q[1], q[2].trim()];
+  else if (bar >= 0) [raw, alias] = [inner.slice(0, bar), inner.slice(bar + 1).trim()];
+  return { target: raw.split('#')[0].trim(), alias: alias || null, raw: raw.trim() };
 }
 
 // ---------- "Related to" ----------
@@ -559,7 +566,8 @@ async function newNote(folder = null) {
 }
 
 // ---------- rename & delete ----------
-// Renames a note and updates [[Old]], [[Old|alias]] and [[Old#heading]] across the vault. Returns the new path.
+// Renames a note and updates [[Old]], [[Old|alias]], [[Old, "alias"]] and [[Old#heading]] across the vault.
+// Returns the new path.
 async function renameNote(path, newName) {
   const note = state.notes.get(path);
   newName = newName.replace(/[\\/:*?"<>|]/g, '').trim();
@@ -583,7 +591,7 @@ async function renameNote(path, newName) {
     api.saveGroups(state.groups);
   }
 
-  const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#])`, 'gi');
+  const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#]|,\\s*["“”„])`, 'gi');
   for (const n of state.notes.values()) {
     const updated = n.content.replace(re, `[[${newName}`);
     if (updated !== n.content) {

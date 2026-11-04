@@ -21,7 +21,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 
 - Home screen with every vault as a card (live graph thumbnail, note count, last opened); rename, export, delete; templates; import a `.zip` as a new vault
 - Markdown editor with Edit / Read modes and autosave
-- `[[Note]]`, `[[Note|alias]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`
+- `[[Note]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`. To show other text than the note's
+  name: `[[Note, "shown text"]]` or `[[Note|shown text]]` (renaming the note keeps the shown text)
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
 - Links in the text are the main way notes connect. Hovering a note in the graph follows them:

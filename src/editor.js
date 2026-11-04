@@ -15,10 +15,17 @@ const WORD_CH = /[\p{L}\p{N}_'-]/u;
 const refreshLinks = StateEffect.define(); // re-check which links resolve
 const external = Annotation.define(); // changes that didn't come from typing
 
+// [[Note]], [[Note#Heading]], [[Note|shown text]] or [[Note, "shown text"]] (any kind of quotes)
+const SHOWN_RE = /^(.*?)\s*,\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
 function parseLink(inner) {
+  let raw = inner;
+  let shown = null;
+  const q = SHOWN_RE.exec(inner);
   const bar = inner.indexOf('|');
-  const raw = (bar < 0 ? inner : inner.slice(0, bar)).trim();
-  return { target: raw.split('#')[0].trim(), label: bar < 0 ? raw : inner.slice(bar + 1).trim() };
+  if (q) [raw, shown] = [q[1], q[2].trim()];
+  else if (bar >= 0) [raw, shown] = [inner.slice(0, bar), inner.slice(bar + 1).trim()];
+  raw = raw.trim();
+  return { target: raw.split('#')[0].trim(), label: shown || raw };
 }
 
 // ---------- link widget shown in place of [[...]] ----------
