@@ -6,7 +6,7 @@ const state = {
   vault: null,
   notes: new Map(), // path -> { path, name, content, mtime }
   links: new Map(), // path -> [{ target, resolved }]
-  ups: new Map(), // path -> Set of parent paths ("Part of")
+  ups: new Map(), // path -> Set of paths it's "Related to"
   groups: { list: [], members: {} }, // coloured groups for this vault
   byName: new Map(), // lowercase name / path (no .md) -> path
   current: null,
@@ -54,12 +54,14 @@ function parseLink(inner) {
   return { target: raw.split('#')[0].trim(), alias: bar < 0 ? null : inner.slice(bar + 1).trim(), raw: raw.trim() };
 }
 
-// ---------- "Part of" (parents) ----------
-// Stored at the top of the note as Obsidian-style properties, which is also what the Breadcrumbs plugin reads:
+// ---------- "Related to" ----------
+// Links in the text are the main way notes connect: they build the chains you see when hovering in the graph.
+// "Related to" is a lighter connection on the side: it only reaches one step. Stored at the top of the note:
 // ---
-// up:
+// related:
 //   - "[[Handelsbolag]]"
 // ---
+// (older notes used `up:` for this; it's still read, and rewritten as `related:` when the list is edited)
 const FRONT_RE = /^---\n([\s\S]*?)\n---(?=\n|$)/;
 const stripFront = (content) => content.replace(FRONT_RE, '').replace(/^\n/, '');
 
@@ -69,33 +71,33 @@ function parseUps(content) {
   if (m) {
     const lines = m[1].split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const key = /^up:\s*(.*)$/.exec(lines[i]);
+      const key = /^(?:related|up):\s*(.*)$/.exec(lines[i]);
       if (!key) continue;
       const values = key[1] ? [key[1]] : [];
       while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) values.push(lines[++i]);
       for (const v of values) for (const l of v.matchAll(LINK_RE)) out.push(parseLink(l[1]).target);
     }
   }
-  // Also accept Dataview-style `up:: [[Parent]]` lines
-  for (const line of content.matchAll(/^up::\s*(.+)$/gm)) for (const l of line[1].matchAll(LINK_RE)) out.push(parseLink(l[1]).target);
+  // Also accept Dataview-style `related:: [[Note]]` (or `up::`) lines
+  for (const line of content.matchAll(/^(?:related|up)::\s*(.+)$/gm)) for (const l of line[1].matchAll(LINK_RE)) out.push(parseLink(l[1]).target);
   return [...new Set(out.filter(Boolean))];
 }
 
-// The edit that sets a note's parents to `names` (other properties are kept)
+// The edit that sets a note's "Related to" list to `names` (other properties are kept)
 function upsEdit(content, names) {
   const m = FRONT_RE.exec(content);
   const rest = [];
   if (m) {
     const lines = m[1].split('\n');
     for (let i = 0; i < lines.length; i++) {
-      if (/^up:/.test(lines[i])) {
+      if (/^(?:related|up):/.test(lines[i])) {
         while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) i++;
         continue;
       }
       if (lines[i].trim()) rest.push(lines[i]);
     }
   }
-  const body = [...(names.length ? ['up:', ...names.map((n) => `  - "[[${n}]]"`)] : []), ...rest];
+  const body = [...(names.length ? ['related:', ...names.map((n) => `  - "[[${n}]]"`)] : []), ...rest];
   const to = m ? m[0].length + (content[m[0].length] === '\n' ? 1 : 0) : 0;
   return { from: 0, to, insert: body.length ? `---\n${body.join('\n')}\n---\n` : '' };
 }
@@ -118,7 +120,8 @@ function rebuildIndex() {
   for (const n of state.notes.values()) {
     const seen = new Set();
     const out = [];
-    for (const m of stripCode(n.content).matchAll(LINK_RE)) {
+    // only links written in the text; "Related to" entries in the properties are kept separately (state.ups)
+    for (const m of stripCode(stripFront(n.content)).matchAll(LINK_RE)) {
       const { target } = parseLink(m[1]);
       if (!target) continue;
       const resolved = resolve(target);
@@ -130,7 +133,7 @@ function rebuildIndex() {
     state.links.set(n.path, out);
   }
 
-  // Parents of each note ("Part of"), as resolved paths
+  // What each note is "Related to", as resolved paths
   state.ups.clear();
   for (const n of state.notes.values()) {
     const parents = new Set();
@@ -368,13 +371,13 @@ $('#g-groups').addEventListener('click', async (e) => {
 $('#g-groups').addEventListener('mouseover', (e) => Graph.highlightGroup(e.target.closest('li[data-id]')?.dataset.id || null));
 $('#g-groups').addEventListener('mouseleave', () => Graph.highlightGroup(null));
 
-// ---------- Part-of bar ----------
+// ---------- "Related to" bar ----------
 function renderPartOf() {
   const note = state.notes.get(state.current);
   if (!note) return;
   const ups = parseUps(note.content);
   $('#po-chips').innerHTML = ups
-    .map((n) => `<span class="po-chip${resolve(n) ? '' : ' unresolved'}"><a href="#" data-open="${escapeHtml(n)}" title="Open “${escapeHtml(n)}”">${escapeHtml(n)}</a><button data-remove="${escapeHtml(n)}" title="Remove from Part of">×</button></span>`)
+    .map((n) => `<span class="po-chip${resolve(n) ? '' : ' unresolved'}"><a href="#" data-open="${escapeHtml(n)}" title="Open “${escapeHtml(n)}”">${escapeHtml(n)}</a><button data-remove="${escapeHtml(n)}" title="Remove from Related to">×</button></span>`)
     .join('');
   $('#partof').classList.toggle('empty', !ups.length);
 }
@@ -394,13 +397,13 @@ async function addParent(raw) {
   const note = state.notes.get(state.current);
   if (!name || !note) return;
   const existing = resolve(name);
-  if (existing === note.path) return toast('A note can’t be part of itself');
+  if (existing === note.path) return toast('A note can’t be related to itself');
   const canonical = existing ? nameOf(existing) : name;
   const ups = parseUps(note.content);
   if (ups.some((u) => u.toLowerCase() === canonical.toLowerCase())) return;
   if (!existing) await createNoteNamed(canonical);
   await setParents([...ups, canonical]);
-  toast(existing ? `Now part of “${canonical}”` : `Created “${canonical}” and put this note under it`);
+  toast(existing ? `Now related to “${canonical}”` : `Created “${canonical}” and related this note to it`);
 }
 
 function closeParentInput() {
@@ -960,9 +963,9 @@ function renderSidePanel() {
     ul.appendChild(li);
   };
 
-  // Links here: everything that links to this note (Part-of entries are links too)
+  // Links here: notes whose text links to this one, and notes related to it
   const subs = [];
-  if (cur) for (const [p, links] of state.links) if (p !== cur && links.some((l) => l.resolved === cur)) subs.push(p);
+  if (cur) for (const [p, links] of state.links) if (p !== cur && (links.some((l) => l.resolved === cur) || state.ups.get(p)?.has(cur))) subs.push(p);
   const sl = $('#subnotes');
   sl.innerHTML = '';
   $('#sub-count').textContent = subs.length ? `(${subs.length})` : '';
@@ -971,8 +974,8 @@ function renderSidePanel() {
     const li = document.createElement('li');
     li.dataset.open = p;
     li.textContent = nameOf(p);
-    // Show the sentence the link is in, unless it's only a Part-of entry
-    const ctx = state.ups.get(p)?.has(cur) && !linkContext(stripFront(state.notes.get(p).content), cur) ? 'Part of' : linkContext(stripFront(state.notes.get(p).content), cur);
+    // Show the sentence the link is in, or "Related" when it's only a Related-to connection
+    const ctx = linkContext(stripFront(state.notes.get(p).content), cur) || (state.ups.get(p)?.has(cur) ? 'Related' : '');
     if (ctx) {
       const s = document.createElement('span');
       s.className = 'ctx';
@@ -983,11 +986,19 @@ function renderSidePanel() {
   }
 
   // Links to: what this note links to
-  const outs = cur ? state.links.get(cur) || [] : [];
+  const outs = cur
+    ? [...(state.links.get(cur) || []), ...[...(state.ups.get(cur) || [])].map((p) => ({ target: nameOf(p), resolved: p, part: true }))]
+    : [];
   if (!outs.length) none(ol, cur ? 'No links yet' : '—');
   for (const l of outs) {
     const li = document.createElement('li');
     li.textContent = l.resolved ? nameOf(l.resolved) : l.target;
+    if (l.part) {
+      const s = document.createElement('span');
+      s.className = 'ctx';
+      s.textContent = 'Related';
+      li.appendChild(s);
+    }
     li.dataset.target = l.target;
     if (!l.resolved) {
       li.className = 'unresolved';
@@ -1202,7 +1213,7 @@ api.onVaultChanged(async (vaultId) => {
 
 // ---------- boot ----------
 Graph.init($('#graph'), {
-  getData: () => ({ notes: state.notes, links: state.links, groups: state.groups, current: state.current }),
+  getData: () => ({ notes: state.notes, links: state.links, related: state.ups, groups: state.groups, current: state.current }),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
   onGroupMenu: (node, x, y) => openGroupMenu(node.id, x, y),

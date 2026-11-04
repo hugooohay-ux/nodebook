@@ -1,8 +1,7 @@
 // A small, clean example vault: the Solar System.
-// - Every note is "Part of" one parent (an `up:` property): a one-way link pointing up the chain, so hovering
-//   shows clean paths like Solar System → Planets → Outer planets → Saturn → Titan. Parents don't link back
-//   (their sub-notes are listed for them automatically).
-// - A few plain one-way "see also" links close small triangles between neighbours, nothing more.
+// - Every topic links to its subtopics in its text: one-way links that make clean paths when hovering,
+//   like Solar System → Planets → Outer planets → Saturn → Titan.
+// - A few "Related to" connections close small triangles between neighbours; they only reach one step.
 // - Three folders colour the branches.
 window.EXAMPLE_VAULT = (() => {
   const folders = [
@@ -19,7 +18,7 @@ The Sun and everything held in orbit around it, formed about 4.6 billion years a
 
 Hover a note in the graph to follow its path up to here, or down to everything under it.`);
   N(null, 'Sun', 'Solar System', `
-A middle-aged star holding 99.86% of the Solar System's mass. Its gravity keeps all the [[Planets]] in orbit.
+A middle-aged star holding 99.86% of the Solar System's mass. Its gravity keeps all the planets in orbit.
 Sunlight takes about 8 minutes to reach Earth.`);
   N(null, 'Planets', 'Solar System', `
 Eight bodies big enough to be round and to have cleared their orbits: four rocky ones close in, four giants further out.`);
@@ -34,7 +33,7 @@ The four small, rocky planets closest to the Sun, with solid surfaces and iron c
 The smallest planet and the closest to the Sun. A year lasts 88 days; with no real atmosphere,
 it swings from 430 °C by day to −180 °C at night.`);
   N(I, 'Venus', 'Inner planets', `
-Almost the same size as [[Earth]], but wrapped in thick carbon dioxide clouds that make it the hottest planet (about 465 °C).
+Almost the same size as Earth, but wrapped in thick carbon dioxide clouds that make it the hottest planet (about 465 °C).
 It spins backwards, and a day there is longer than its year.`);
   N(I, 'Earth', 'Inner planets', `
 The only place known to have life, with liquid water covering 71% of its surface.`);
@@ -58,7 +57,7 @@ Its Great Red Spot is a storm wider than Earth that has lasted for centuries.`);
   N(O, 'Europa', 'Jupiter', `
 An icy moon of Jupiter with a salty ocean under its crust — one of the best places to look for life.`);
   N(O, 'Saturn', 'Outer planets', `
-The second-largest planet after [[Jupiter]], and light enough to float in water.`);
+The second-largest planet after Jupiter, and light enough to float in water.`);
   N(O, "Saturn's rings", 'Saturn', `
 Billions of pieces of water ice spread over 280,000 km, yet often only about 10 m thick.`);
   N(O, 'Titan', 'Saturn', `
@@ -66,7 +65,7 @@ Saturn's largest moon and the only moon with a thick atmosphere. It has lakes an
   N(O, 'Uranus', 'Outer planets', `
 An ice giant tipped on its side, so each pole gets 42 years of sunlight followed by 42 years of darkness.`);
   N(O, 'Neptune', 'Outer planets', `
-The farthest planet, with the fastest winds in the Solar System. Like [[Uranus]], an ice giant.
+The farthest planet, with the fastest winds in the Solar System. Like Uranus, an ice giant.
 It was found in 1846 by mathematics before anyone saw it.`);
   N(O, 'Triton', 'Neptune', `
 Neptune's largest moon orbits backwards, so it was probably captured. Geysers of nitrogen erupt from its frozen surface.`);
@@ -83,13 +82,17 @@ A broad ring of icy bodies beyond Neptune, 30–50 times as far from the Sun as 
   N(B, 'Pluto', 'Kuiper belt', `
 Called the ninth planet until 2006, now a dwarf planet. New Horizons flew past in 2015 and found a heart-shaped plain of nitrogen ice.`);
   N(B, 'Comets', 'Small bodies', `
-Balls of ice and dust that grow glowing tails near the Sun. Short-period comets come from the [[Kuiper belt]].`);
+Balls of ice and dust that grow glowing tails near the Sun. Short-period comets come from the Kuiper belt.`);
   N(B, "Halley's Comet", 'Comets', `
 Returns every 75–76 years: last seen in 1986, next in 2061.`);
 
+  // A topic links to its subtopics in its text (that's what builds the chains in the graph);
+  // a few side connections are "Related to" instead, which only reach one step.
+  const RELATED = { Sun: 'Planets', Venus: 'Earth', Saturn: 'Jupiter', Neptune: 'Uranus', Comets: 'Kuiper belt' };
+  const children = (title) => notes.filter((m) => m.up === title).map((m) => m.title);
   const files = notes.map((n) => ({
     path: `${n.title}.md`,
-    content: (n.up ? `---\nup:\n  - "[[${n.up}]]"\n---\n` : '') + n.body + '\n',
+    content: (RELATED[n.title] ? `---\nrelated:\n  - "[[${RELATED[n.title]}]]"\n---\n` : '') + n.body + (children(n.title).length ? '\n\n' + children(n.title).map((t) => `- [[${t}]]`).join('\n') : '') + '\n',
   }));
   const list = folders.map((f, i) => ({ id: `ex${i}`, name: f.name, color: f.color }));
   const members = {};

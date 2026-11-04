@@ -231,9 +231,9 @@
     <main id="main">
       <section id="note-view">
         <div id="partof" class="empty">
-          <span class="po-label" title="The broader notes this one belongs under. Hovering a note in the graph lights up everything below it.">↑ Part of</span>
+          <span class="po-label" title="Notes this one is related to. A lighter connection than a link in the text: when hovering in the graph it lights up one step only.">↔ Related to</span>
           <span id="po-chips"></span>
-          <button id="po-add" title="Put this note under another note">+ Add</button>
+          <button id="po-add" title="Relate this note to another note">+ Add</button>
           <input id="po-input" list="po-list" placeholder="Note name…" autocomplete="off" hidden>
           <datalist id="po-list"></datalist>
           <button id="group-chip" class="group-chip" title="Put this note in a coloured group"></button>
@@ -246,9 +246,9 @@
     </main>
 
     <aside id="rightbar">
-      <h3 title="Notes that link to this one or are part of it">Links here <span id="sub-count"></span></h3>
+      <h3 title="Notes that link to this one, or are related to it">Links here <span id="sub-count"></span></h3>
       <ul id="subnotes"></ul>
-      <h3 title="Notes this one links to or is part of">Links to</h3>
+      <h3 title="Notes this one links to, or is related to">Links to</h3>
       <ul id="outlinks"></ul>
       <div id="stats"></div>
     </aside>

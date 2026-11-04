@@ -24,11 +24,14 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - `[[Note]]`, `[[Note|alias]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
-- "Part of" parents, set from a bar above each note. Stored as `up:` properties (the format Obsidian's
-  Breadcrumbs plugin reads), hidden in the editor. The parent lists the note under Sub-notes.
-- Hovering a note in the graph lights up its line in both directions — the notes it leads to and the notes
-  that lead to it, step by step — but never sideways (a sibling under the same parent stays dark).
-  It doesn't matter which of two notes writes the link.
+- Links in the text are the main way notes connect. Hovering a note in the graph follows them:
+  everything below it lights up, and above it only the main path to the top (through the biggest notes),
+  plus its other notes directly above. Never sideways: a sibling stays dark. Which way is "down" is worked
+  out from the vault (a topic linking to its subtopics, or the other way round, both work).
+- "Related to": a lighter side connection, set from the bar above each note and stored as `related:`
+  properties (older `up:` entries are read too). When hovering it lights up one step only, so
+  Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
+- Note size = how much sits below a note along its links
 - Renaming a note updates links to it across the vault
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
   Right-click to let it float again, or "Unpin all". Notes are kept off lines that aren't theirs, and lines
@@ -37,7 +40,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:
   its notes share its colour in the graph and can be pulled together. Groups can also be set from the graph
   (right-click a note) or the chip on a note, and managed in the graph panel.
-- "Example: Solar System" template on the home screen: 26 notes in 3 folders, with one-way "Part of" chains and a few see-also links
+- "Example: Solar System" template on the home screen: 26 notes in 3 folders: topics link to their subtopics, plus a few "Related to" connections
 - Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles, highlight filter

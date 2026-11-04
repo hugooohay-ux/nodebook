@@ -42,13 +42,23 @@ const Graph = (() => {
 
   // ---------- data ----------
   function rebuild() {
-    const { notes, links, groups, current } = opts.getData();
+    const { notes, links, related, groups, current } = opts.getData();
     const map = new Map();
-    const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), down: new Set(), up: new Set() });
+    // fwd/bwd: links written in the text (fwd = notes this one links to) — the hover chain follows these.
+    // linked: "Related to" connections — hovering lights them one step, never further.
+    const node = (id, label, unresolved) => ({ id, label, unresolved, deg: 0, nbrs: new Set(), fwd: new Set(), bwd: new Set(), linked: new Set() });
     for (const n of notes.values()) map.set(n.path, node(n.path, n.name, false));
 
     const es = [];
     const seen = new Set();
+    const connect = (a, b) => {
+      const key = a < b ? a + '\n' + b : b + '\n' + a;
+      if (seen.has(key)) return;
+      seen.add(key);
+      es.push([a, b]);
+      map.get(a).nbrs.add(b);
+      map.get(b).nbrs.add(a);
+    };
     for (const [src, outs] of links) {
       for (const l of outs) {
         let id = l.resolved;
@@ -57,21 +67,24 @@ const Graph = (() => {
           id = '?' + l.target.toLowerCase();
           if (!map.has(id)) map.set(id, node(id, l.target, true));
         }
-        // Remember which way each link was written, so a hover chain can follow links in one direction at a time
-        map.get(id).down.add(src);
-        map.get(src).up.add(id);
-        const key = src < id ? src + '\n' + id : id + '\n' + src;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        es.push([src, id]);
-        map.get(src).nbrs.add(id);
-        map.get(id).nbrs.add(src);
+        map.get(src).fwd.add(id);
+        map.get(id).bwd.add(src);
+        connect(src, id);
+      }
+    }
+    for (const [a, rs] of related || []) {
+      if (!map.has(a)) continue;
+      for (const b of rs) {
+        if (!map.has(b)) continue;
+        map.get(a).linked.add(b);
+        map.get(b).linked.add(a);
+        connect(a, b);
       }
     }
     if (ctx) ctx.font = '12px "Segoe UI", sans-serif';
     for (const n of map.values()) {
       n.deg = n.nbrs.size;
-      n.links = n.up.size + n.down.size; // total links: ones it makes plus ones made to it
+      n.links = n.fwd.size + n.bwd.size + n.linked.size; // every connection it has
       n.labelW = ctx ? ctx.measureText(n.label).width : n.label.length * 6.5; // label width on screen, in px
     }
 
@@ -95,16 +108,23 @@ const Graph = (() => {
 
     byId = new Map(keep.map((n) => [n.id, n]));
 
-    // Size = how much sits below a note (every note reachable by following links one way),
-    // scaled linearly from the smallest (0) to the biggest (1).
-    // "Below" is whichever link direction has the clearest top note, so it works however links are written.
+    // Which way is "down" the link chains: whichever direction has the clearest top note, so it works whether
+    // a topic links to its subtopics (Associationsrätt → [[Bolagsformer]]) or the subtopics link back up to it.
+    // Size = how much sits below a note (every note reachable going down), scaled from smallest (0) to biggest (1).
+    const orient = (dir) => keep.forEach((n) => { n.down = dir === 'fwd' ? n.fwd : n.bwd; n.up = dir === 'fwd' ? n.bwd : n.fwd; });
     if (keep.length <= 1500) {
-      const reach = (dir) => keep.map((n) => walk(n, dir).size - 1);
-      const viaUp = reach('up');
-      const viaDown = reach('down');
-      const below = Math.max(...viaUp) >= Math.max(...viaDown) ? viaUp : viaDown;
+      orient('fwd');
+      const viaFwd = keep.map((n) => walk(n, 'down').size - 1);
+      orient('bwd');
+      const viaBwd = keep.map((n) => walk(n, 'down').size - 1);
+      const useFwd = Math.max(0, ...viaFwd) >= Math.max(0, ...viaBwd);
+      orient(useFwd ? 'fwd' : 'bwd');
+      const below = useFwd ? viaFwd : viaBwd;
       keep.forEach((n, i) => (n.below = below[i]));
-    } else keep.forEach((n) => (n.below = n.links)); // very large vaults: plain link count is much cheaper
+    } else {
+      orient('fwd');
+      keep.forEach((n) => (n.below = n.links)); // very large vaults: plain link count is much cheaper
+    }
     const lo = Math.min(...keep.map((n) => n.below));
     const hi = Math.max(...keep.map((n) => n.below));
     for (const n of keep) n.size = hi > lo ? (n.below - lo) / (hi - lo) : 0;
@@ -152,14 +172,31 @@ const Graph = (() => {
     return depth;
   }
 
-  // The hover chain: the line of notes above a note plus the line below it — never sideways,
-  // so a sibling (reached only by going up and then back down) stays dark
+  // Never sideways: a sibling (reached only by going up and then back down) stays dark.
+  // Hovering a note lights, following links written in the text:
+  //  - everything below it, directly or further down
+  //  - above it, only the main path to the top: always on through the biggest note. Its other notes above light
+  //    up one step but aren't followed further, so a big web never lights up as a whole
+  // and its "Related to" notes, one step only (Juridisk person lights Rättskapacitet, but hovering Handelsbolag,
+  // which links to Juridisk person, doesn't reach Rättskapacitet)
   function chainFrom(start) {
     const below = walk(start, 'down');
-    const above = walk(start, 'up');
+    const above = new Map([[start.id, 0]]);
+    for (const id of start.up) if (byId.has(id)) above.set(id, 1);
+    for (let n = start, d = 0; ; ) {
+      const ps = [...n.up].map((id) => byId.get(id)).filter((m) => m && (above.get(m.id) ?? Infinity) > d && !(m.id === start.id));
+      if (!ps.length) break;
+      n = ps.sort((a, b) => b.size - a.size || b.below - a.below || b.deg - a.deg)[0];
+      d += 1;
+      if (above.has(n.id) && above.get(n.id) < d) break; // a loop
+      above.set(n.id, d);
+    }
     const all = new Map(below);
     for (const [id, d] of above) all.set(id, Math.min(d, all.get(id) ?? Infinity));
-    return { all, below, above };
+    const linked = new Map();
+    for (const id of start.linked) if (byId.has(id) && !all.has(id)) linked.set(id, 1);
+    for (const [id, d] of linked) all.set(id, d);
+    return { all, below, above, linked };
   }
 
   // ---------- motion: a calm free-form layout ----------
@@ -995,11 +1032,14 @@ const Graph = (() => {
           else if (r[dir].has(p.id) && dp >= dr && dp > 0) [e.from, e.to] = [r, p];
           if (e.to) break;
         }
+        // a "Related to" connection of the hovered note lights just that one line
+        if (!e.to && p === focus && c.linked.has(r.id)) [e.from, e.to] = [p, r];
+        else if (!e.to && r === focus && c.linked.has(p.id)) [e.from, e.to] = [r, p];
       }
     }
     const step = reducedMotion.matches ? 0 : STEP_MS;
     const lit = (depth) => now - chainSince >= (depth - 1) * step; // has this step of the trickle arrived yet?
-    const strength = (depth) => Math.max(0.45, 1 - 0.14 * (depth - 1)); // fainter the further down
+    const strength = (depth) => Math.max(0.45, 1 - 0.14 * (depth - 1)); // fainter the further away
     for (const n of nodes) {
       const d = chain?.get(n.id);
       n.hot = (n.hot || 0) + ((n === focus ? 1 : 0) - (n.hot || 0)) * ease;
