@@ -10,6 +10,8 @@ import { tags as t } from '@lezer/highlight';
 
 // [[Note]] — or [[Note]shown text], which shows "shown text" (group 2)
 const LINK_RE = /\[\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
+// [r[Note]] / [r[Note]shown text]: a "related" link (one step in the graph). Both kinds: group 1 = "r" or empty
+const ANY_LINK_RE = /\[(r)?\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 const WORD_CH = /[\p{L}\p{N}_'-]/u;
 
@@ -32,21 +34,22 @@ function parseLink(inner, after) {
 
 // ---------- link widget shown in place of [[...]] ----------
 class LinkWidget extends WidgetType {
-  constructor(label, target, resolved, open) {
+  constructor(label, target, resolved, open, related = false) {
     super();
     this.label = label;
     this.target = target;
     this.resolved = resolved;
     this.open = open;
+    this.related = related;
   }
   eq(o) {
-    return o.label === this.label && o.target === this.target && o.resolved === this.resolved;
+    return o.label === this.label && o.target === this.target && o.resolved === this.resolved && o.related === this.related;
   }
   toDOM() {
     const el = document.createElement('span');
-    el.className = this.resolved ? 'cm-wikilink' : 'cm-wikilink cm-unresolved';
+    el.className = 'cm-wikilink' + (this.resolved ? '' : ' cm-unresolved') + (this.related ? ' cm-related' : '');
     el.textContent = this.label;
-    el.title = this.resolved ? `Open “${this.target}”` : `Create “${this.target}”`;
+    el.title = (this.resolved ? `Open “${this.target}”` : `Create “${this.target}”`) + (this.related ? ' (related)' : '');
     el.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -99,20 +102,20 @@ function linkDecorations(view, opts) {
   const props = hiddenEnd(text);
   const ranges = view.state.selection.ranges;
   const builder = new RangeSetBuilder();
-  for (const m of text.matchAll(LINK_RE)) {
+  for (const m of text.matchAll(ANY_LINK_RE)) {
     const from = m.index;
     const to = from + m[0].length;
     if (from < props || code.some(([a, b]) => from >= a && from < b)) continue;
-    const { target, label } = parseLink(m[1], m[2]);
+    const { target, label } = parseLink(m[2], m[3]);
     if (!target) continue;
-    // Show the raw [[...]] only while the cursor is in or touching it
+    // Show the raw [[...]] / [r[...]] only while the cursor is in or touching it
     const editing = view.hasFocus && ranges.some((r) => r.from <= to && r.to >= from);
     builder.add(
       from,
       to,
       editing
         ? Decoration.mark({ class: 'cm-wikilink-raw' })
-        : Decoration.replace({ widget: new LinkWidget(label, target, opts.resolve(target), opts.onOpenLink) })
+        : Decoration.replace({ widget: new LinkWidget(label, target, opts.resolve(target), opts.onOpenLink, !!m[1]) })
     );
   }
   return builder.finish();
@@ -311,9 +314,10 @@ const COMMANDS = {
 
 // ---------- [[ autocomplete ----------
 const linkCompletions = (opts) => (ctx) => {
-  const m = ctx.matchBefore(/\[\[[^[\]\n|#]*/);
+  const m = ctx.matchBefore(/\[r?\[[^[\]\n|#]*/); // after [[ or [r[
   if (!m) return null;
-  const query = m.text.slice(2).trim();
+  const open = m.text.startsWith('[r[') ? 3 : 2;
+  const query = m.text.slice(open).trim();
   const names = opts.noteNames();
   const apply = (name) => (view, _c, from, to) => {
     const closed = view.state.sliceDoc(to, to + 2) === ']]';
@@ -323,7 +327,7 @@ const linkCompletions = (opts) => (ctx) => {
   if (query && !names.some((n) => n.toLowerCase() === query.toLowerCase())) {
     options.push({ label: query, detail: 'new note', apply: apply(query), boost: -50 });
   }
-  return { from: m.from + 2, options, validFor: /^[^[\]\n|#]*$/ };
+  return { from: m.from + open, options, validFor: /^[^[\]\n|#]*$/ };
 };
 
 // ---------- Ctrl+Enter: word at cursor (or selection) -> [[link]] ----------
@@ -487,7 +491,7 @@ function spellDecorations(view) {
       },
     });
     const text = state.sliceDoc(from, to);
-    for (const m of text.matchAll(LINK_RE)) skip.push([from + m.index, from + m.index + m[0].length]);
+    for (const m of text.matchAll(ANY_LINK_RE)) skip.push([from + m.index, from + m.index + m[0].length]);
     for (const m of text.matchAll(/\bhttps?:\/\/\S+|\bwww\.\S+|\S+@\S+\.\S+/g)) skip.push([from + m.index, from + m.index + m[0].length]);
     for (const m of text.matchAll(WORD_RE)) {
       const a = from + m.index;

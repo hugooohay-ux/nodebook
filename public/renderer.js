@@ -38,6 +38,10 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // [[Note]] — or [[Note]shown text], which shows "shown text" in the note (group 2)
 const LINK_RE = /\[\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
+// [r[Note]] / [r[Note]shown text]: a link in the text that works like "Related to" (lights one step, no chain)
+const REL_RE = /\[r\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
+// both kinds, for showing them: group 1 = "r" for a related link
+const ANY_LINK_RE = /\[(r)?\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 
 // Apply `fn` only to the parts of `text` that aren't code blocks/spans
@@ -192,6 +196,11 @@ function rebuildIndex() {
     const parents = new Set();
     for (const t of parseUps(n.content)) {
       const p = resolve(t);
+      if (p && p !== n.path) parents.add(p);
+    }
+    // …and [r[Note]] links written in the text, which work the same way
+    for (const m of stripCode(stripFront(n.content)).matchAll(REL_RE)) {
+      const p = resolve(parseLink(m[1], m[2]).target);
       if (p && p !== n.path) parents.add(p);
     }
     state.ups.set(n.path, parents);
@@ -777,9 +786,9 @@ async function renameNote(path, newName) {
     api.saveGroups(state.groups);
   }
 
-  const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#]|,?\\s*["“”„])`, 'gi');
+  const re = new RegExp(`(\\[r?\\[)\\s*${escapeRe(oldName)}\\s*(?=[\\]|#]|,?\\s*["“”„])`, 'gi'); // [[Old… and [r[Old…
   for (const n of state.notes.values()) {
-    const updated = n.content.replace(re, `[[${newName}`);
+    const updated = n.content.replace(re, (_m, open) => open + newName);
     if (updated !== n.content) {
       n.content = updated;
       await api.writeNote(n.path, updated);
@@ -817,7 +826,7 @@ function unlinkFrom(gone) {
       content = content.slice(0, from) + insert + content.slice(to);
     }
     content = outsideCode(content, (part) =>
-      part.replace(LINK_RE, (m, inner, shown) => {
+      part.replace(ANY_LINK_RE, (m, _r, inner, shown) => {
         const l = parseLink(inner, shown);
         return gone.has(resolve(l.target)) ? l.alias || l.raw : m;
       })
@@ -899,9 +908,9 @@ function renderPreview() {
   const note = state.notes.get(state.current);
   if (!note) return;
   const md = outsideCode(stripFront(note.content), (part) =>
-    part.replace(LINK_RE, (_m, inner, shown) => {
+    part.replace(ANY_LINK_RE, (_m, rel, inner, shown) => {
       const { target, alias, raw } = parseLink(inner, shown);
-      const cls = resolve(target) ? 'wikilink' : 'wikilink unresolved';
+      const cls = (resolve(target) ? 'wikilink' : 'wikilink unresolved') + (rel ? ' related' : '');
       return `<a href="#" class="${cls}" data-target="${escapeHtml(target)}">${escapeHtml(alias || raw)}</a>`;
     })
   );
@@ -1050,7 +1059,7 @@ function edited(ts) {
 // Small rendered preview of the start of a note, shown as a shrunken page
 function thumbHtml(content) {
   const md = outsideCode(stripFront(content).slice(0, 1500), (part) =>
-    part.replace(LINK_RE, (_m, inner, shown) => `<span class="wikilink">${escapeHtml(parseLink(inner, shown).alias || parseLink(inner, shown).raw)}</span>`)
+    part.replace(ANY_LINK_RE, (_m, _r, inner, shown) => `<span class="wikilink">${escapeHtml(parseLink(inner, shown).alias || parseLink(inner, shown).raw)}</span>`)
   );
   return marked.parse(md);
 }
@@ -1192,8 +1201,8 @@ $('#vh-import').addEventListener('click', () => $('#file-input').click());
 
 function linkContext(content, targetPath) {
   for (const line of stripCode(content).split('\n')) {
-    for (const m of line.matchAll(LINK_RE)) {
-      if (resolve(parseLink(m[1], m[2]).target) === targetPath) return line.replace(LINK_RE, (_x, i, s) => parseLink(i, s).alias || parseLink(i, s).raw).trim();
+    for (const m of line.matchAll(ANY_LINK_RE)) {
+      if (resolve(parseLink(m[2], m[3]).target) === targetPath) return line.replace(ANY_LINK_RE, (_x, _r, i, s) => parseLink(i, s).alias || parseLink(i, s).raw).trim();
     }
   }
   return '';

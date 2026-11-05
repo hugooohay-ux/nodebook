@@ -26,6 +26,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   English from dictionary-en, MIT/BSD; see the LICENSE files there), checked in a worker (`src/spell-worker.js`).
 - `[[Note]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`. To show other text than the note's
   name: `[[Note]shown text]` (the older `[[Note|shown text]]` and `[[Note, "shown text"]]` also work; renaming the note keeps the shown text)
+- `[r[Note]]` or `[r[Note]shown text]` links a note as "Related to" right in the text: it shows dotted with ↔,
+  and in the graph it lights one step only, the same as the Related to bar
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
 - Links in the text are the main way notes connect. Hovering a note in the graph follows them:

@@ -449,6 +449,9 @@ body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep):not(#btn-spell) { op
 .cm-wikilink:hover { background: var(--accent-soft); text-decoration-color: var(--accent); }
 .cm-wikilink.cm-unresolved { color: var(--text-dim); text-decoration-style: dashed; text-decoration-color: var(--unresolved); }
 .cm-wikilink-raw { color: var(--accent); }
+/* [r[Note]]: a "related" link (one step in the graph) — dotted, with a small ↔ */
+.cm-wikilink.cm-related, .markdown a.wikilink.related { text-decoration-line: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.cm-wikilink.cm-related::before, .markdown a.wikilink.related::before { content: '↔'; margin-right: 2px; font-size: .78em; opacity: .7; }
 
 /* ---------- markdown ---------- */
 .markdown { line-height: 1.7; }
