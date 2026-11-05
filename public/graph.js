@@ -916,6 +916,32 @@ const Graph = (() => {
               }
             }
           }
+          // Still nothing that removes an overlap? Then try further out along its line (a longer line, up to about
+          // twice as long), to make room beyond whatever's crowding it. Only taken if it clears every overlap the
+          // note has, so lines never get stretched for a half-fix and the graph doesn't slowly spread out.
+          const stuck = () => minimal && best > score - 500;
+          const maxLen = (lineLen || settings.dist) * 2.4;
+          if (stuck()) {
+            for (const anchor of anchors) {
+              const r0 = Math.max(settings.dist * 0.6, Math.hypot(ox - anchor.x, oy - anchor.y));
+              const now = Math.atan2(oy - anchor.y, ox - anchor.x);
+              for (const f of [1.4, 1.8, 2.2]) {
+                if (r0 * f > maxLen) break;
+                for (const d of [0, 20, -20, 45, -45]) {
+                  if (performance.now() > until) break;
+                  const a = now + (d * Math.PI) / 180;
+                  moveTo(anchor.x + r0 * f * Math.cos(a), anchor.y + r0 * f * Math.sin(a));
+                  if (localOverlaps(moving) !== 0) continue;
+                  const s = scoreMoved(moving, before) + Math.hypot(n.x - ox, n.y - oy) * moveCost * (1 + tagAlong.length);
+                  if (s < best - 0.5) {
+                    best = s;
+                    bestPos = [n.x, n.y];
+                    bestAnchor = anchor;
+                  }
+                }
+              }
+            }
+          }
           moveTo(ox, oy);
           // Moving one note alone can't always fix it (e.g. two linked siblings on either side of a line).
           // So also try moving a whole branch as one rigid piece, which keeps the branch's own shape: the branch
@@ -961,6 +987,24 @@ const Graph = (() => {
                   const dx = anchor.x + r * Math.cos(a) - rx;
                   const dy = anchor.y + r * Math.sin(a) - ry;
                   branch.forEach((m, i) => { m.x = start[i][0] + dx; m.y = start[i][1] + dy; });
+                  const s = scoreMoved(group, before) + Math.hypot(dx, dy) * moveCost * (1 + Math.sqrt(branch.length) / 2);
+                  if (s < best - 0.5) {
+                    best = s;
+                    bestTurn = { branch, pos: branch.map((m) => [m.x, m.y]), anchor };
+                  }
+                }
+              }
+              // …or push the whole branch further out along its line (the line to the anchor gets longer),
+              // making room for it beyond whatever it's crossing
+              const dir = Math.atan2(ry - anchor.y, rx - anchor.x);
+              for (const f of stuck() ? [1.3, 1.6, 2] : []) {
+                if (r0 * f > maxLen) break;
+                for (const da of [0, 0.25, -0.25]) {
+                  if (performance.now() > until) break;
+                  const dx = anchor.x + r0 * f * Math.cos(dir + da) - rx;
+                  const dy = anchor.y + r0 * f * Math.sin(dir + da) - ry;
+                  branch.forEach((m, i) => { m.x = start[i][0] + dx; m.y = start[i][1] + dy; });
+                  if (localOverlaps(group) !== 0) continue; // only if it clears the branch completely
                   const s = scoreMoved(group, before) + Math.hypot(dx, dy) * moveCost * (1 + Math.sqrt(branch.length) / 2);
                   if (s < best - 0.5) {
                     best = s;
