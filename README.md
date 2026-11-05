@@ -54,6 +54,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Drag a note in the graph to place it: it stays there (saved with the vault) and the rest settles around it.
   Right-click to let it float again, or "Unpin all". Notes are kept off lines that aren't theirs, and lines
   stop at the edge of each note.
+- Crossing lines get untangled after a drop, a slider change or Reset layout: a quick fix right away, then a
+  more thorough repair in the background (a few milliseconds per frame, so nothing freezes) that glides the
+  notes to each cleaner layout it finds. It can move whole chains of notes to the other side of a note.
+- Graph sliders: Repel, Spacing, Chain (how strongly links pull linked notes together) and Node size
 - Folders in the notes panel: make one with the folder button, drag notes into it (or right-click a note),
   collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:
   its notes share its colour in the graph and can be pulled together. Groups can also be set from the graph
