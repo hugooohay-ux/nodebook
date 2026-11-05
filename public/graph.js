@@ -37,7 +37,6 @@ const Graph = (() => {
   let visible = false;
   let raf = 0;
   let hover = null;
-  let stickyId = null; // the note you came from: lit as if hovered, until you hover another note
   let drag = null; // { node } | { pan, sx, sy, cx, cy }
   let downAt = null;
   let fitPending = true;
@@ -1112,7 +1111,7 @@ const Graph = (() => {
       const rank = (n) => (n.label.toLowerCase() === q ? 2 : n.label.toLowerCase().startsWith(q) ? 1 : 0);
       searchHit = hits.sort((a, b) => rank(b) - rank(a) || b.size - a.size || b.deg - a.deg)[0] || null;
     }
-    const focus = hover || (drag && drag.node) || searchHit || byId.get(stickyId) || null;
+    const focus = hover || (drag && drag.node) || searchHit || null;
     const match = (n) => (!q || n.label.toLowerCase().includes(q) || !!chain?.has(n.id)) && (!litGroup || n.group?.id === litGroup);
 
     // Ease every highlight value toward its target so hover changes animate
@@ -1462,9 +1461,7 @@ const Graph = (() => {
         cam.y = drag.cy + (p.sy - drag.sy);
       } else if (e.target === canvas) {
         hover = hit(p);
-        canvas.style.cursor = hover ? 'pointer' : 'grab';
-        if (hover && hover.id !== stickyId) stickyId = null; // hovering another note takes over for good
-      }
+        canvas.style.cursor = hover ? 'pointer' : 'grab';      }
     });
     window.addEventListener('pointerup', (e) => {
       if (box) {
@@ -1607,7 +1604,6 @@ const Graph = (() => {
     },
     show() {
       const fresh = !positions.size;
-      stickyId = opts.getData().current || null; // light up the note you came from
       rebuild();
       updateStats();
       if (fresh || settings.local) {
@@ -1623,7 +1619,6 @@ const Graph = (() => {
       visible = false;
       cancelAnimationFrame(raf);
       hover = null;
-      stickyId = null;
       drag = null;
     },
     rebuild() {

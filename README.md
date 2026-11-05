@@ -73,7 +73,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 | Ctrl+Alt+0–3 | Normal text / Heading 1–3 |
 | Ctrl+Shift+7 / 8 / 9 | Numbered list / bulleted list / checklist |
 | Ctrl+P / Ctrl+O | Search notes |
-| Ctrl+G | Graph view (the note you came from is lit until you hover another); from the graph, back to that note |
+| Ctrl+G | Graph view; from the graph, back to the note you were on |
 | Ctrl+F | In the graph: Highlight search (lights up a note's path), Esc clears. On the documents page: note search |
 | Ctrl+E | Toggle edit / read |
 | Ctrl+S | Save now |
