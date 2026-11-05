@@ -851,7 +851,7 @@ const Graph = (() => {
     const continuing = guide.size > 0;
     guide.clear();
     alpha = 0; // stop exactly as it is
-    const swings = overlaps() ? improve(nodes.length > 60 ? 150 : 400, true) : new Map(); // small vaults: time to fix everything
+    const swings = overlaps() ? improve(nodes.length > 60 ? 150 : 400, true, nodes.length > 60 ? 250 : 700) : new Map(); // small vaults: time to fix everything
     const region = dropped ? around(dropped, 2) : new Set(nodes);
     lineLen = typicalLine();
     for (const [id, a] of polish(region, 90, from)) if (!swings.has(id)) swings.set(id, a);
@@ -862,7 +862,14 @@ const Graph = (() => {
 
   // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
   // `minimal`: only fix overlapping lines, and move as little as possible (keeps the shape you left it in)
-  function improve(budgetMs, minimal = false) {
+  // `deepMs`: extra time to untangle knots single moves can't (after a drop or slider change, not while dragging)
+  function improve(budgetMs, minimal = false, deepMs = 0) {
+    // Lots of crossings at once (something dragged far into another cluster): small moves won't do, so all the
+    // time goes to the untangling below, starting from the layout as you left it
+    if (minimal && deepMs && countCrossings() >= 3) {
+      deepMs += budgetMs;
+      budgetMs = 0;
+    }
     const until = performance.now() + budgetMs;
     const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
     const free = (n) => !isHeld(n); // the note in your hand, pinned notes and the last dropped one stay put
@@ -916,17 +923,18 @@ const Graph = (() => {
               }
             }
           }
-          // Still nothing that removes an overlap? Then try further out along its line (a longer line, up to about
-          // twice as long), to make room beyond whatever's crowding it. Only taken if it clears every overlap the
-          // note has, so lines never get stretched for a half-fix and the graph doesn't slowly spread out.
+          // Still nothing that removes an overlap? Then try changing its line's length: pulled in closer, or further
+          // out (up to about twice as long) to make room beyond whatever's crowding it. Only taken if it clears every
+          // overlap the note has, so lines never change length for a half-fix and the graph doesn't slowly spread out.
           const stuck = () => minimal && best > score - 500;
           const maxLen = (lineLen || settings.dist) * 2.4;
           if (stuck()) {
             for (const anchor of anchors) {
               const r0 = Math.max(settings.dist * 0.6, Math.hypot(ox - anchor.x, oy - anchor.y));
               const now = Math.atan2(oy - anchor.y, ox - anchor.x);
-              for (const f of [1.4, 1.8, 2.2]) {
+              for (const f of [0.75, 0.55, 1.4, 1.8, 2.2]) {
                 if (r0 * f > maxLen) break;
+                if (r0 * f < settings.dist * 0.4) continue; // shorter, but never cramped
                 for (const d of [0, 20, -20, 45, -45]) {
                   if (performance.now() > until) break;
                   const a = now + (d * Math.PI) / 180;
@@ -997,8 +1005,9 @@ const Graph = (() => {
               // …or push the whole branch further out along its line (the line to the anchor gets longer),
               // making room for it beyond whatever it's crossing
               const dir = Math.atan2(ry - anchor.y, rx - anchor.x);
-              for (const f of stuck() ? [1.3, 1.6, 2] : []) {
+              for (const f of stuck() ? [0.75, 0.55, 1.3, 1.6, 2] : []) {
                 if (r0 * f > maxLen) break;
+                if (r0 * f < settings.dist * 0.4) continue;
                 for (const da of [0, 0.25, -0.25]) {
                   if (performance.now() > until) break;
                   const dx = anchor.x + r0 * f * Math.cos(dir + da) - rx;
@@ -1036,7 +1045,194 @@ const Graph = (() => {
       }
       if (clean()) break;
     }
+    // Still crossing? Then it's a knot no single move can undo (e.g. a loop of notes with a line through it,
+    // where two notes have to change sides together). Re-settle just the notes involved and their neighbours.
+    // Each candidate untangling is finished off with the usual small moves, and kept only if the end result
+    // has fewer overlaps than before.
+    const deepUntil = performance.now() + deepMs;
+    for (let round = 0; minimal && deepMs && !clean() && round < 6 && performance.now() < deepUntil; round++) {
+      const snap = snapshot();
+      let bestEnd = null;
+      // the round's time: almost half for flips, a bit for re-settling the knot, the rest for re-settling all
+      const t0 = performance.now();
+      const left = deepUntil - t0;
+      const ends = [t0 + left * 0.45, t0 + left * 0.6, deepUntil];
+      const tryAll = (cands, end, follow = 50) => {
+        for (const cand of cands) {
+          if (performance.now() > end || bestEnd?.k === 0) return;
+          restore(snap);
+          cand.forEach(([n, x, y]) => { n.x = x; n.y = y; });
+          const more = improve(nodes.length > 60 ? follow / 2 : follow, true); // its neighbours follow it
+          const k = overlaps();
+          if (k < count && (!bestEnd || k < bestEnd.k)) bestEnd = { k, pos: snapshot(), more, moved: cand.map(([n]) => n) };
+        }
+      };
+      const steps = [
+        (end) => tryAll(flips(), end),
+        (end) => tryAll(untangle(Math.max(10, (end - performance.now()) * 0.6)), end),
+        // e.g. a big note dragged far off, its lines now cutting through another cluster: every note that isn't
+        // held re-settles, so its cluster follows it and the rest make room
+        (end) => tryAll(untangle(Math.max(10, (end - performance.now()) * 0.5), true), end + 30, 120),
+      ];
+      // many crossings at once (something dragged far): re-settle everything first
+      if (countCrossings() >= 3) {
+        steps.unshift(steps.pop());
+        ends[0] = t0 + left * 0.7;
+        ends[1] = t0 + left * 0.85;
+      }
+      steps.forEach((step, i) => {
+        if (bestEnd?.k === 0) return;
+        restore(snap);
+        step(ends[i]);
+      });
+      restore(bestEnd ? bestEnd.pos : snap);
+      if (bestEnd) {
+        for (const n of bestEnd.moved) swingsAround.delete(n.id);
+        for (const [id, a] of bestEnd.more) swingsAround.set(id, a);
+        count = bestEnd.k;
+      } else break; // nothing helps any more
+    }
     return swingsAround;
+  }
+
+  // Re-settle the knot (the notes with overlaps plus the notes they link to) as a small free layout of its own,
+  // everything else staying exactly where it is. Neighbours get pushed aside too, and lines may stretch (up to
+  // ~2.4× the usual length) to make room. Every start is judged on the whole graph: all lines, not just the
+  // moved notes'. Returns the best few starts as [[note, x, y], …] lists (fewest crossings, then fewest
+  // overlaps, then least movement), only ones with fewer crossings than now; positions are left unchanged.
+  // `wide`: every note that isn't held re-settles (only from where they are now, plus small shakes)
+  function untangle(budgetMs, wide = false) {
+    const until = performance.now() + budgetMs;
+    const D = lineLen || settings.dist;
+    const trouble = troubleNotes(true);
+    if (!trouble.length) return [];
+    const R = new Set();
+    if (wide) {
+      if (nodes.length > 80) return [];
+      for (const n of nodes) if (!isHeld(n)) R.add(n);
+    } else {
+      for (const n of trouble) {
+        R.add(n);
+        for (const m of nbrsOf(n)) if (!isHeld(m)) R.add(m);
+      }
+      for (const n of [...R]) for (const m of nbrsOf(n)) if (m.deg === 1 && !isHeld(m)) R.add(m); // end notes come along
+      if (R.size > 24) return []; // too big to re-settle quickly
+    }
+    const list = [...R];
+    const start = list.map((n) => [n.x, n.y]);
+    const crossNow = countCrossings();
+    const maxLen = D * 2.4;
+    const cx = start.reduce((s, p) => s + p[0], 0) / list.length;
+    const cy = start.reduce((s, p) => s + p[1], 0) / list.length;
+    const spread = Math.max(D * 1.5, Math.max(...start.map(([x, y]) => Math.hypot(x - cx, y - cy))));
+    // notes near enough to push on the knot
+    const near = wide ? nodes : nodes.filter((q) => Math.hypot(q.x - cx, q.y - cy) < spread + D * 3);
+    let s = 4242;
+    const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const found = [];
+    for (let t = 0; performance.now() < until && t < 200; t++) {
+      // the first start is where they are now; then a mix of small shakes and scattered starts
+      const shake = t % 2 === 1;
+      list.forEach((n, i) => {
+        if (t === 0) [n.x, n.y] = start[i];
+        else if (shake) {
+          n.x = start[i][0] + (rand() - 0.5) * D * 1.5;
+          n.y = start[i][1] + (rand() - 0.5) * D * 1.5;
+        } else {
+          const a = rand() * Math.PI * 2;
+          const r = Math.sqrt(rand()) * spread;
+          n.x = cx + r * Math.cos(a);
+          n.y = cy + r * Math.sin(a);
+        }
+        n.vx = 0;
+        n.vy = 0;
+      });
+      settleOnly(list, near, D);
+      let long = false;
+      for (const n of list) for (const m of nbrsOf(n)) if (Math.hypot(m.x - n.x, m.y - n.y) > maxLen) long = true;
+      if (long && !wide) continue; // (re-settling everything only ever pulls long lines in)
+      const crossings = countCrossings();
+      if (crossings > crossNow || (crossings === crossNow && !wide)) continue;
+      let travel = 0;
+      list.forEach((n, i) => { travel += Math.hypot(n.x - start[i][0], n.y - start[i][1]) * (1 + (n.size || 0)); });
+      found.push({ crossings, k: overlaps(), travel, pos: list.map((n) => [n, n.x, n.y]) });
+    }
+    list.forEach((n, i) => { [n.x, n.y] = start[i]; n.vx = 0; n.vy = 0; });
+    found.sort((a, b) => a.crossings - b.crossings || a.k - b.k || a.travel - b.travel);
+    return found.slice(0, 4).map((f) => f.pos);
+  }
+
+  // Flips: a note in the knot jumps to its mirror spot across the line between two of the notes it links to,
+  // or across a line it crosses (e.g. a note on the wrong side of a triangle goes over to the other side).
+  // Its end notes come along. Returns the starts worth finishing off, best first (fewest crossings, then the
+  // shortest jump); positions are left unchanged.
+  function flips() {
+    const cross = countCrossings();
+    const found = [];
+    for (const n of troubleNotes(true)) {
+      if (isHeld(n)) continue;
+      const ns = nbrsOf(n);
+      const tag = ns.filter((m) => m.deg === 1 && !isHeld(m));
+      const lines = [];
+      for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) lines.push([ns[i], ns[j]]);
+      for (const m of ns) for (const [r, s] of edges) if (r !== n && s !== n && r !== m && s !== m && segmentsCross(n, m, r, s)) lines.push([r, s]);
+      const ox = n.x;
+      const oy = n.y;
+      const moving = [n, ...tag];
+      const start = moving.map((m) => [m.x, m.y]);
+      for (const [a, b] of lines) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 1) continue;
+        const t = ((ox - a.x) * dx + (oy - a.y) * dy) / len2;
+        const px = a.x + t * dx;
+        const py = a.y + t * dy;
+        const mx = 2 * px - ox - ox; // shift that mirrors n across the line
+        const my = 2 * py - oy - oy;
+        moving.forEach((m, i) => { m.x = start[i][0] + mx; m.y = start[i][1] + my; });
+        const c = countCrossings();
+        // a flip may leave a few crossings that its neighbours then fix by following it
+        if (c <= cross + 3) found.push({ c, k: overlaps(), jump: Math.hypot(mx, my), pos: moving.map((m) => [m, m.x, m.y]) });
+        moving.forEach((m, i) => { [m.x, m.y] = start[i]; });
+      }
+    }
+    found.sort((a, b) => a.c - b.c || a.k - b.k || a.jump - b.jump);
+    return found.slice(0, 8).map((f) => f.pos);
+  }
+
+  // The physics, but only the notes in `list` move; the notes in `near` push on them like fixed walls
+  function settleOnly(list, near, D) {
+    for (let it = 0, a = 1; it < 120; it++, a *= 0.97) {
+      for (const p of list) {
+        for (const q of near) {
+          if (q === p) continue;
+          let dx = p.x - q.x;
+          let dy = p.y - q.y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.5; }
+          const f = (settings.repel * a) / d2;
+          p.vx += dx * f;
+          p.vy += dy * f;
+        }
+        for (const q of nbrsOf(p)) {
+          const dx = q.x - p.x;
+          const dy = q.y - p.y;
+          const d = Math.sqrt(dx * dx + dy * dy) || 1;
+          const f = ((d - D) / d) * 0.12 * a;
+          p.vx += dx * f;
+          p.vy += dy * f;
+        }
+      }
+      for (const p of list) {
+        p.vx *= 0.6;
+        p.vy *= 0.6;
+        const v = Math.hypot(p.vx, p.vy);
+        if (v > 40) { p.vx *= 40 / v; p.vy *= 40 / v; }
+        p.x += p.vx;
+        p.y += p.vy;
+      }
+    }
   }
 
   // Kept for the panel's "tidy" use: repair in place and animate
@@ -1689,6 +1885,22 @@ const Graph = (() => {
         labelsOnNotes: labelsOnNotes().map(([a, b]) => `${a.label} label on ${b.label}`),
         trouble: troubleNotes(true).map((n) => n.label),
       };
+    },
+    // For tests: put notes exactly where a layout() said (held = the note last dropped), then tidy as after a drop
+    loadLayout(list, heldIds = []) {
+      for (const p of list) {
+        const n = byId.get(p.id);
+        if (!n) continue;
+        Object.assign(n, { x: p.x, y: p.y, vx: 0, vy: 0, anim: null });
+        positions.set(n.id, { x: p.x, y: p.y, vx: 0, vy: 0 });
+      }
+      held.clear();
+      for (const id of heldIds) held.add(id);
+      alpha = 0;
+    },
+    settle(droppedId = null) {
+      settleAndTidy(droppedId ? byId.get(droppedId) : null);
+      this.finishAnimations();
     },
     // Jump every running animation to its end (for tests: background tabs don't run animations)
     finishAnimations() {
