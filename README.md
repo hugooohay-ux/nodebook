@@ -20,8 +20,10 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 ## Features
 
 - Home screen with every vault as a card (live graph thumbnail, note count, last opened); rename, export, delete; templates; import a `.zip` as a new vault
-- Markdown editor with Edit / Read modes and autosave. Spell checking like Obsidian: misspelled words are
-  underlined and right-click shows suggestions (uses the spell-check languages set in your browser)
+- Markdown editor with Edit / Read modes and autosave. Spell checking like Obsidian, built in: misspelled
+  words get a red wavy line, right-click for suggestions or "Add to dictionary". The Spelling button in the toolbar
+  turns it on/off and picks Svenska and/or English. Dictionaries: `public/dict/` (Swedish from dictionary-sv, LGPL;
+  English from dictionary-en, MIT/BSD; see the LICENSE files there), checked in a worker (`src/spell-worker.js`).
 - `[[Note]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`. To show other text than the note's
   name: `[[Note]shown text]` (the older `[[Note|shown text]]` and `[[Note, "shown text"]]` also work; renaming the note keeps the shown text)
 - Clicking a link to a note that doesn't exist creates it

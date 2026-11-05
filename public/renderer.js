@@ -652,9 +652,57 @@ $('#toolbar').addEventListener('mousedown', (e) => {
   // Keep focus (and the selection) in the editor while clicking toolbar buttons
   if (e.target.closest('button')) e.preventDefault();
 });
+// ---------- spell check button: on/off and languages ----------
+const SPELL_LANGS = [['sv', 'Svenska'], ['en', 'English']];
+function renderSpellButton() {
+  const s = NoteEditor.getSpell();
+  const on = s.on && s.langs.length;
+  const btn = $('#btn-spell');
+  btn.classList.toggle('off', !on);
+  const names = SPELL_LANGS.filter(([k]) => s.langs.includes(k)).map(([, n]) => n);
+  btn.title = on ? `Spell check on (${names.join(' + ')}). Click to change` : 'Spell check off. Click to turn it on';
+}
+let spellSettings = null;
+function closeSpellSettings() {
+  spellSettings?.remove();
+  spellSettings = null;
+}
+function openSpellSettings() {
+  closeSpellSettings();
+  const s = NoteEditor.getSpell();
+  const tick = (yes) => (yes ? '<span class="check">✓</span>' : '');
+  spellSettings = document.createElement('ul');
+  spellSettings.className = 'menu spell-settings';
+  spellSettings.innerHTML =
+    `<li data-act="toggle">Check spelling${tick(s.on)}</li><li class="sep"></li>` +
+    SPELL_LANGS.map(([k, n]) => `<li data-lang="${k}" class="${s.on ? '' : 'disabled'}">${n}${tick(s.langs.includes(k))}</li>`).join('') +
+    '<li class="sep"></li><li class="hint">Misspelled words get a red wavy line. Right-click one for suggestions or to add it to your dictionary.</li>';
+  document.body.appendChild(spellSettings);
+  const r = $('#btn-spell').getBoundingClientRect();
+  spellSettings.style.left = Math.min(r.left, innerWidth - spellSettings.offsetWidth - 8) + 'px';
+  spellSettings.style.top = r.bottom + 6 + 'px';
+  spellSettings.addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-act], li[data-lang]');
+    if (!li) return;
+    const cur = NoteEditor.getSpell();
+    if (li.dataset.act) NoteEditor.setSpell({ on: !cur.on });
+    else {
+      const langs = cur.langs.includes(li.dataset.lang) ? cur.langs.filter((l) => l !== li.dataset.lang) : [...cur.langs, li.dataset.lang];
+      NoteEditor.setSpell({ langs });
+    }
+    renderSpellButton();
+    openSpellSettings(); // redraw with the new ticks
+  });
+}
+document.addEventListener('pointerdown', (e) => {
+  if (spellSettings && !e.target.closest('.spell-settings, #btn-spell')) closeSpellSettings();
+});
+renderSpellButton();
+
 $('#toolbar').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
+  if (b.id === 'btn-spell') return spellSettings ? closeSpellSettings() : openSpellSettings();
   if (b.dataset.cmd) editor.exec(b.dataset.cmd);
   else if (b.dataset.size) {
     display.size += +b.dataset.size;

@@ -5,7 +5,7 @@
   "description": "A Markdown note web app with vaults, wiki links, backlinks and a graph view",
   "scripts": {
     "start": "node dev-server.js",
-    "build": "esbuild src/editor.js --bundle --minify --format=iife --target=es2020 --outfile=public/vendor/editor.js"
+    "build": "esbuild src/editor.js --bundle --minify --format=iife --target=es2020 --outfile=public/vendor/editor.js && esbuild src/spell-worker.js --bundle --minify --format=iife --target=es2020 --outfile=public/vendor/spell-worker.js"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.18.6",
@@ -15,6 +15,9 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.4",
     "@lezer/highlight": "^1.2.1",
-    "esbuild": "^0.24.2"
+    "dictionary-en": "^4.0.0",
+    "dictionary-sv": "^4.0.0",
+    "esbuild": "^0.24.2",
+    "nspell": "^2.1.5"
   }
 }

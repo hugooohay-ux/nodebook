@@ -403,10 +403,198 @@ const theme = EditorView.theme({
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' },
   '.cm-completionDetail': { marginLeft: '8px', color: 'var(--text-dim)', fontStyle: 'italic' },
   '.cm-completionMatchedText': { textDecoration: 'none', fontWeight: '650' },
+  // misspelled words: a red wavy underline, like Obsidian
+  '.cm-misspelled': { textDecoration: 'underline wavy #e5484d', textDecorationSkipInk: 'none', textUnderlineOffset: '3px', textDecorationThickness: '1px' },
+});
+
+// ---------- spell checking (like Obsidian: red squiggle, right-click for suggestions) ----------
+// Settings and your own dictionary are kept in this browser. The checking itself runs in a worker.
+const SPELL_KEY = 'nodebook:spell';
+const DICT_KEY = 'nodebook:dictionary';
+const spell = {
+  config: (() => {
+    try { return { on: true, langs: ['sv', 'en'], ...JSON.parse(localStorage.getItem(SPELL_KEY) || '{}') }; } catch { return { on: true, langs: ['sv', 'en'] }; }
+  })(),
+  personal: (() => {
+    try { return new Set(JSON.parse(localStorage.getItem(DICT_KEY) || '[]')); } catch { return new Set(); }
+  })(),
+  cache: new Map(), // word -> true (right) / false (misspelled)
+  pending: new Set(),
+  views: new Set(),
+  worker: null,
+  waiting: new Map(), // id -> resolve
+  nextId: 1,
+  timer: null,
+};
+const spellRefresh = StateEffect.define();
+
+function spellWorker() {
+  if (spell.worker) return spell.worker;
+  try {
+    spell.worker = new Worker('vendor/spell-worker.js');
+  } catch {
+    return null;
+  }
+  spell.worker.onmessage = ({ data }) => {
+    if (data.type === 'checked') {
+      data.words.forEach((w, i) => spell.cache.set(w, data.results[i]));
+      for (const w of data.words) spell.pending.delete(w);
+      for (const v of spell.views) v.dispatch({ effects: spellRefresh.of(null) });
+    }
+    spell.waiting.get(data.id)?.(data);
+    spell.waiting.delete(data.id);
+  };
+  return spell.worker;
+}
+function askWorker(msg) {
+  const w = spellWorker();
+  if (!w) return Promise.resolve(null);
+  const id = spell.nextId++;
+  return new Promise((resolve) => {
+    spell.waiting.set(id, resolve);
+    w.postMessage({ ...msg, id, langs: spell.config.langs });
+  });
+}
+// Words waiting for an answer are sent in one batch shortly after they show up
+function queueCheck(word) {
+  if (spell.pending.has(word)) return;
+  spell.pending.add(word);
+  clearTimeout(spell.timer);
+  spell.timer = setTimeout(() => {
+    const words = [...spell.pending].filter((w) => !spell.cache.has(w));
+    if (words.length) askWorker({ type: 'check', words });
+  }, 120);
+}
+
+const WORD_RE = /[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*/gu;
+// Not worth checking: single letters, acronyms (EU, AB), anything with digits, words you've added
+const skipWord = (w) => w.length < 2 || (w.length <= 5 && w === w.toUpperCase()) || /\d/.test(w) || spell.personal.has(w) || spell.personal.has(w.toLowerCase());
+
+function spellDecorations(view) {
+  if (!spell.config.on || !spell.config.langs.length) return Decoration.none;
+  const { state } = view;
+  const props = hiddenEnd(state.sliceDoc(0, 4000));
+  const head = view.hasFocus ? state.selection.main.head : -1;
+  const builder = new RangeSetBuilder();
+  for (const { from, to } of view.visibleRanges) {
+    // Parts that aren't prose: code, web addresses, HTML, and [[links]]
+    const skip = [];
+    syntaxTree(state).iterate({
+      from,
+      to,
+      enter: (n) => {
+        if (/Code|URL|HTML|Comment|LinkMark|Autolink/.test(n.name)) skip.push([n.from, n.to]);
+      },
+    });
+    const text = state.sliceDoc(from, to);
+    for (const m of text.matchAll(LINK_RE)) skip.push([from + m.index, from + m.index + m[0].length]);
+    for (const m of text.matchAll(/\bhttps?:\/\/\S+|\bwww\.\S+|\S+@\S+\.\S+/g)) skip.push([from + m.index, from + m.index + m[0].length]);
+    for (const m of text.matchAll(WORD_RE)) {
+      const a = from + m.index;
+      const b = a + m[0].length;
+      if (a < props || (head >= a && head <= b)) continue; // not the word you're typing
+      if (skip.some(([s, e]) => a < e && b > s)) continue;
+      const w = m[0];
+      if (skipWord(w)) continue;
+      const known = spell.cache.get(w);
+      if (known === undefined) queueCheck(w);
+      else if (known === false) builder.add(a, b, Decoration.mark({ class: 'cm-misspelled' }));
+    }
+  }
+  return builder.finish();
+}
+
+const spellPlugin = ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      spell.views.add(view);
+      this.decorations = spellDecorations(view);
+    }
+    update(u) {
+      if (u.docChanged || u.viewportChanged || u.focusChanged || u.selectionSet || u.transactions.some((tr) => tr.effects.some((e) => e.is(spellRefresh)))) {
+        this.decorations = spellDecorations(u.view);
+      }
+    }
+    destroy() {
+      spell.views.forEach((v) => !v.dom.isConnected && spell.views.delete(v));
+    }
+  },
+  { decorations: (p) => p.decorations }
+);
+
+// Right-click a misspelled word: suggestions, or add it to your dictionary
+let spellMenu = null;
+function closeSpellMenu() {
+  spellMenu?.remove();
+  spellMenu = null;
+}
+document.addEventListener('pointerdown', (e) => {
+  if (spellMenu && !e.target.closest('.spell-menu')) closeSpellMenu();
+});
+function wordAt(view, pos) {
+  const line = view.state.doc.lineAt(pos);
+  for (const m of line.text.matchAll(WORD_RE)) {
+    const a = line.from + m.index;
+    if (pos >= a && pos <= a + m[0].length) return { from: a, to: a + m[0].length, word: m[0] };
+  }
+  return null;
+}
+const spellMenuHandler = EditorView.domEventHandlers({
+  contextmenu(e, view) {
+    if (!spell.config.on) return false;
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+    if (pos == null) return false;
+    const hit = wordAt(view, pos);
+    if (!hit || spell.cache.get(hit.word) !== false || skipWord(hit.word)) return false;
+    e.preventDefault();
+    closeSpellMenu();
+    spellMenu = document.createElement('ul');
+    spellMenu.className = 'menu spell-menu';
+    spellMenu.innerHTML = '<li class="menu-head">Looking for suggestions…</li>';
+    document.body.appendChild(spellMenu);
+    const place = () => {
+      spellMenu.style.left = Math.min(e.clientX, innerWidth - spellMenu.offsetWidth - 8) + 'px';
+      spellMenu.style.top = Math.min(e.clientY, innerHeight - spellMenu.offsetHeight - 8) + 'px';
+    };
+    place();
+    const menu = spellMenu;
+    askWorker({ type: 'suggest', word: hit.word }).then((res) => {
+      if (spellMenu !== menu) return;
+      const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+      const list = res?.suggestions || [];
+      menu.innerHTML =
+        (list.length ? list.map((s) => `<li data-fix="${esc(s)}"><b>${esc(s)}</b></li>`).join('') : '<li class="menu-head">No suggestions</li>') +
+        `<li class="sep"></li><li data-add="1">Add “${esc(hit.word)}” to dictionary</li>`;
+      place();
+    });
+    menu.addEventListener('click', (ev) => {
+      const li = ev.target.closest('li');
+      if (!li || (!li.dataset.fix && !li.dataset.add)) return;
+      closeSpellMenu();
+      if (li.dataset.fix) {
+        view.dispatch({ changes: { from: hit.from, to: hit.to, insert: li.dataset.fix }, userEvent: 'input.spell' });
+      } else {
+        spell.personal.add(hit.word);
+        try { localStorage.setItem(DICT_KEY, JSON.stringify([...spell.personal])); } catch { /* storage blocked */ }
+        for (const v of spell.views) v.dispatch({ effects: spellRefresh.of(null) });
+      }
+      view.focus();
+    });
+    return true;
+  },
 });
 
 // ---------- public API ----------
 window.NoteEditor = {
+  // Spell checking: { on, langs: ['sv', 'en'] }
+  getSpell: () => ({ ...spell.config, langs: [...spell.config.langs] }),
+  setSpell(next) {
+    spell.config = { ...spell.config, ...next };
+    try { localStorage.setItem(SPELL_KEY, JSON.stringify(spell.config)); } catch { /* storage blocked */ }
+    spell.cache.clear();
+    spell.pending.clear();
+    for (const v of spell.views) v.dispatch({ effects: spellRefresh.of(null) });
+  },
   create(parent, opts) {
     const extensions = [
       history(),
@@ -415,9 +603,11 @@ window.NoteEditor = {
       markdown({ base: markdownLanguage }),
       syntaxHighlighting(highlight),
       EditorView.lineWrapping,
-      // Spell checking like Obsidian: misspelled words get the browser's red squiggle, and right-clicking one
-      // shows suggestions. Uses the spell-check languages set in the browser (e.g. Swedish + English).
-      EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences' }),
+      // Spell checking is the app's own (spellPlugin), with Swedish and English built in, so the browser's
+      // checker is off to avoid two sets of squiggles
+      EditorView.contentAttributes.of({ spellcheck: 'false', autocapitalize: 'sentences' }),
+      spellPlugin,
+      spellMenuHandler,
       placeholder(opts.placeholder || ''),
       autocompletion({ override: [linkCompletions(opts)], icons: false }),
       livePreview(opts),

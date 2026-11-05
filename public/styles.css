@@ -351,10 +351,24 @@ body.notes-collapsed #btn-expand { display: flex; }
 #toolbar select option { background: var(--bg-elev); color: var(--text); }
 #tb-style { width: 118px; }
 #toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+/* spell check button + its menu */
+#toolbar .spell-btn { width: auto; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; font-size: 13px; }
+#toolbar .spell-btn .squiggle { stroke: #e5484d; stroke-width: 1.3; }
+#toolbar .spell-btn.off { color: var(--text-dim); }
+#toolbar .spell-btn.off .squiggle { stroke: currentColor; opacity: .45; }
+.spell-settings { min-width: 220px; max-width: 260px; }
+.spell-settings li { display: flex; align-items: center; gap: 8px; }
+.spell-settings li .check { margin-left: auto; color: var(--accent); }
+.spell-settings li.disabled { opacity: .45; pointer-events: none; }
+.spell-settings .sep, .spell-menu .sep { height: 1px; margin: 4px 0; padding: 0; background: var(--border); cursor: default; }
+.spell-settings .hint { font-size: 11px; color: var(--text-dim); cursor: default; line-height: 1.35; }
+.spell-settings .hint:hover, .spell-menu .menu-head:hover { background: none; }
+.spell-menu { min-width: 200px; }
+.spell-menu b { font-weight: 600; }
 #toolbar .size { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; flex-shrink: 0; }
 #toolbar .size button { min-width: 24px; height: 26px; }
 #tb-size { min-width: 26px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
-body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep) { opacity: .35; pointer-events: none; }
+body.no-edit #toolbar > :not(.size):not(#tb-font):not(.sep):not(#btn-spell) { opacity: .35; pointer-events: none; }
 
 /* ---------- "Part of" bar: the note's parents ---------- */
 #partof {

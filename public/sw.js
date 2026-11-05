@@ -2,7 +2,7 @@
 // The app's own files are cached on install. Every request is answered from the cache straight away and
 // refreshed from the network in the background, so a new version shows up on the next open.
 // Notes themselves live in IndexedDB, not here.
-const CACHE = 'nodebook-v1';
+const CACHE = 'nodebook-v2';
 const SHELL = [
   './',
   'index.html',
@@ -19,6 +19,11 @@ const SHELL = [
   'vendor/marked.umd.js',
   'vendor/jszip.min.js',
   'vendor/editor.js',
+  'vendor/spell-worker.js',
+  'dict/sv.aff',
+  'dict/sv.dic',
+  'dict/en.aff',
+  'dict/en.dic',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
