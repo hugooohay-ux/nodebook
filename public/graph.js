@@ -41,8 +41,15 @@ const Graph = (() => {
   let downAt = null;
   let fitPending = true;
 
-  const settings = { local: false, depth: 1, unresolved: true, orphans: true, repel: 500, dist: 80, filter: '', pull: true, sizeMul: 1 };
-  try { settings.sizeMul = JSON.parse(localStorage.getItem('nodebook:graph'))?.sizeMul ?? 1; } catch { /* storage blocked */ }
+  const settings = { local: false, depth: 1, unresolved: true, orphans: true, repel: 500, dist: 80, filter: '', pull: true, sizeMul: 1, linkMul: 1 };
+  try {
+    const saved = JSON.parse(localStorage.getItem('nodebook:graph'));
+    settings.sizeMul = saved?.sizeMul ?? 1;
+    settings.linkMul = saved?.linkMul ?? 1;
+  } catch { /* storage blocked */ }
+  const saveSettings = () => {
+    try { localStorage.setItem('nodebook:graph', JSON.stringify({ sizeMul: settings.sizeMul, linkMul: settings.linkMul })); } catch { /* storage blocked */ }
+  };
   let litGroup = null; // group being hovered in the legend
 
   // ---------- data ----------
@@ -321,7 +328,7 @@ const Graph = (() => {
       const dx = q.x - p.x;
       const dy = q.y - p.y;
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = ((d - settings.dist) / d) * 0.06 * a;
+      const f = ((d - settings.dist) / d) * 0.06 * settings.linkMul * a;
       p.vx += dx * f; p.vy += dy * f;
       q.vx -= dx * f; q.vy -= dy * f;
     }
@@ -1219,7 +1226,7 @@ const Graph = (() => {
           const dx = q.x - p.x;
           const dy = q.y - p.y;
           const d = Math.sqrt(dx * dx + dy * dy) || 1;
-          const f = ((d - D) / d) * 0.12 * a;
+          const f = ((d - D) / d) * 0.12 * settings.linkMul * a;
           p.vx += dx * f;
           p.vy += dy * f;
         }
@@ -1770,15 +1777,22 @@ const Graph = (() => {
     on('g-size', 'input', (e) => {
       settings.sizeMul = +e.target.value;
       alpha = Math.max(alpha, 0.3); // bigger notes need a bit more room
-      try { localStorage.setItem('nodebook:graph', JSON.stringify({ sizeMul: settings.sizeMul })); } catch { /* storage blocked */ }
+      saveSettings();
     });
     const sizeSlider = document.getElementById('g-size');
     if (sizeSlider) sizeSlider.value = settings.sizeMul;
+    on('g-link', 'input', (e) => {
+      settings.linkMul = +e.target.value;
+      alpha = Math.max(alpha, 0.4);
+      saveSettings();
+    });
+    const linkSlider = document.getElementById('g-link');
+    if (linkSlider) linkSlider.value = settings.linkMul;
     on('g-fit', 'click', fit);
     on('g-pull', 'change', (e) => { settings.pull = e.target.checked; settleAndTidy(); });
     // Letting go of a slider tidies up too, so squeezing or spreading the graph never leaves lines crossing
     // let go of a slider: the graph finishes spreading out to the new setting, then tidies (it doesn't snap back)
-    for (const id of ['g-repel', 'g-dist', 'g-size']) on(id, 'change', () => settleAndTidy(null, true));
+    for (const id of ['g-repel', 'g-dist', 'g-size', 'g-link']) on(id, 'change', () => settleAndTidy(null, true));
     on('g-unpin', 'click', () => {
       // Reset layout: drop pins and drags, then find a clean layout again
       pins.clear();
