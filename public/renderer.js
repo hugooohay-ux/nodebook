@@ -223,7 +223,7 @@ const noteHash = (path) => `${vaultHash()}/n/${encodeURIComponent(path)}`;
 
 async function enterVault(info) {
   Home.hide();
-  Graph.reset(await api.getPins(info.id));
+  Graph.reset(await api.getPins(info.id), await api.getLayout(info.id), info.id);
   state.vault = info;
   state.groups = await api.getGroups(info.id);
   state.current = null;
@@ -1561,6 +1561,7 @@ Graph.init($('#graph'), {
   onSelectionChange: () => renderSelection(),
   onOpen: (node) => (node.unresolved ? openOrCreate(node.label) : openNote(node.id)),
   onPinsChange: (pins) => api.savePins(pins),
+  onLayoutChange: (vaultId, layout) => api.saveLayout(layout, vaultId),
   onBlankMenu: (at, x, y) => openBlankMenu(at, x, y),
   // right-click → Group… on a selected note groups all the selected notes
   onGroupMenu: (node, x, y) => openGroupMenu(state.selected.has(node.id) && state.selected.size > 1 ? [...state.selected] : node.id, x, y),

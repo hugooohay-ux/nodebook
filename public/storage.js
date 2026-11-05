@@ -158,6 +158,18 @@ See also: [[Welcome]], [[Linking notes]].
       });
     },
 
+    // Where every note was in the graph, and the view: { positions: { notePath: [x, y] }, cam: { x, y, k } },
+    // so reopening the vault shows the graph as you left it
+    async getLayout(id = current) {
+      return tx('readonly', async (s) => (await req(s.vaults.get(id)))?.layout || null);
+    },
+    async saveLayout(layout, id = current) {
+      await tx('readwrite', async (s) => {
+        const v = await req(s.vaults.get(id));
+        if (v) s.vaults.put({ ...v, layout });
+      });
+    },
+
     // Coloured groups: { list: [{ id, name, color }], members: { notePath: groupId } }, kept with the vault
     async getGroups(id = current) {
       const g = await tx('readonly', async (s) => (await req(s.vaults.get(id)))?.groups);

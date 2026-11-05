@@ -57,6 +57,8 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Crossing lines get untangled after a drop, a slider change or Reset layout: a quick fix right away, then a
   more thorough repair in the background (a few milliseconds per frame, so nothing freezes) that glides the
   notes to each cleaner layout it finds. It can move whole chains of notes to the other side of a note.
+- The graph remembers where every note was, and the view, per vault: reloading or reopening a vault shows it
+  as you left it ("Reset layout" lays it out afresh)
 - Graph sliders: Repel, Spacing, Chain (how strongly links pull linked notes together) and Node size
 - Folders in the notes panel: make one with the folder button, drag notes into it (or right-click a note),
   collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:

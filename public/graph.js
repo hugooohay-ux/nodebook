@@ -2013,6 +2013,29 @@ const Graph = (() => {
     });
   }
 
+  // ---------- remembering the layout ----------
+  // Every few seconds (and when leaving), if the layout has changed and is at rest, hand it to the app to keep
+  // with the vault: every note's spot (where it's gliding to, if it's moving) and the view.
+  let layoutVault = null;
+  let lastSavedLayout = '';
+  function saveLayout(force = false) {
+    if (!layoutVault || !nodes.length || settings.local || !opts?.onLayoutChange) return;
+    if (!force && (drag || alpha > 0.01)) return; // wait until it's still
+    const out = {};
+    for (const [id, p] of positions) out[id] = [Math.round(p.x), Math.round(p.y)];
+    for (const n of nodes) {
+      const [x, y] = n.anim ? [n.anim.gx, n.anim.gy] : [n.x, n.y];
+      out[n.id] = [Math.round(x), Math.round(y)];
+    }
+    const layout = { positions: out, cam: { x: Math.round(cam.x), y: Math.round(cam.y), k: Math.round(cam.k * 1000) / 1000 } };
+    const key = JSON.stringify(layout);
+    if (key === lastSavedLayout) return;
+    lastSavedLayout = key;
+    opts.onLayoutChange(layoutVault, layout);
+  }
+  setInterval(() => { if (visible) saveLayout(); }, 2000);
+  addEventListener('pagehide', () => saveLayout(true));
+
   // ---------- placing notes by hand ----------
   function savePins() {
     opts.onPinsChange?.(Object.fromEntries(pins));
@@ -2079,6 +2102,7 @@ const Graph = (() => {
       raf = requestAnimationFrame(loop);
     },
     hide() {
+      saveLayout(true);
       stopDeepRepair();
       visible = false;
       cancelAnimationFrame(raf);
@@ -2170,17 +2194,30 @@ const Graph = (() => {
       if (!n) return [];
       return [...chainFrom(n).all].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
     },
-    // Forget the layout when switching vaults; `placed` is the new vault's hand-placed notes
-    reset(placed = {}) {
+    // Switching vaults: `placed` is the new vault's hand-placed notes, `saved` the layout it was left in (from
+    // onLayoutChange), shown again exactly as it was; without one the graph gets a fresh layout
+    reset(placed = {}, saved = null, vaultId = null) {
+      saveLayout(true); // the vault we're leaving
+      stopDeepRepair();
       positions.clear();
       pins.clear();
       held.clear();
       for (const [id, p] of Object.entries(placed)) pins.set(id, p);
+      for (const [id, [x, y]] of Object.entries(saved?.positions || {})) positions.set(id, { x, y, vx: 0, vy: 0 });
+      layoutVault = vaultId;
+      lastSavedLayout = saved ? JSON.stringify(saved) : '';
       hover = null;
-      fitPending = true;
+      if (positions.size) alpha = 0; // keep it exactly as it was left
+      if (saved?.cam) Object.assign(cam, saved.cam);
+      fitPending = !saved?.cam;
     },
-    // Keep a placed note's spot when it's renamed or deleted
+    // Keep a note's spot (placed by hand or not) when it's renamed or deleted
     movePin(from, to) {
+      const at = positions.get(from);
+      if (at) {
+        positions.delete(from);
+        if (to) positions.set(to, at);
+      }
       const p = pins.get(from);
       if (!p) return;
       pins.delete(from);
