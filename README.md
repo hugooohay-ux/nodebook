@@ -23,7 +23,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 - Markdown editor with Edit / Read modes and autosave. Spell checking like Obsidian: misspelled words are
   underlined and right-click shows suggestions (uses the spell-check languages set in your browser)
 - `[[Note]]`, `[[Note#heading]]` links, with autocomplete after typing `[[`. To show other text than the note's
-  name: `[[Note, "shown text"]]` or `[[Note|shown text]]` (renaming the note keeps the shown text)
+  name: `[[Note]shown text]` (the older `[[Note|shown text]]` and `[[Note, "shown text"]]` also work; renaming the note keeps the shown text)
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
 - Links in the text are the main way notes connect. Hovering a note in the graph follows them:

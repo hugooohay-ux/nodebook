@@ -36,7 +36,8 @@ const dirOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '')
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const LINK_RE = /\[\[([^[\]\n]+?)\]\]/g;
+// [[Note]] — or [[Note]shown text], which shows "shown text" in the note (group 2)
+const LINK_RE = /\[\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 
 // Apply `fn` only to the parts of `text` that aren't code blocks/spans
@@ -52,15 +53,16 @@ function outsideCode(text, fn) {
 const stripCode = (text) => text.replace(CODE_RE, (m) => m.replace(/[^\n]/g, ' '));
 
 // A link's inside: [[Note]], [[Note#Heading]], or with its own text shown in the note:
-// [[Note|shown text]] or [[Note, "shown text"]] (straight or curly quotes, single or doubled)
-const SHOWN_RE = /^(.*?)\s*,\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
-function parseLink(inner) {
+// [[Note]shown text] (`shown` is what follows the first ]), or the older [[Note|shown text]] and
+// [[Note, "shown text"]] (straight or curly quotes, the comma optional)
+const SHOWN_RE = /^(.*?)\s*,?\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
+function parseLink(inner, shown) {
   let raw = inner;
-  let alias = null;
+  let alias = shown?.trim() || null;
   const q = SHOWN_RE.exec(inner);
   const bar = inner.indexOf('|');
-  if (q) [raw, alias] = [q[1], q[2].trim()];
-  else if (bar >= 0) [raw, alias] = [inner.slice(0, bar), inner.slice(bar + 1).trim()];
+  if (q) [raw, alias] = [q[1], alias || q[2].trim()];
+  else if (bar >= 0) [raw, alias] = [inner.slice(0, bar), alias || inner.slice(bar + 1).trim()];
   return { target: raw.split('#')[0].trim(), alias: alias || null, raw: raw.trim() };
 }
 
@@ -166,7 +168,7 @@ function rebuildIndex() {
     const out = [];
     // only links written in the text; "Related to" entries in the properties are kept separately (state.ups)
     for (const m of stripCode(stripFront(n.content)).matchAll(LINK_RE)) {
-      const { target } = parseLink(m[1]);
+      const { target } = parseLink(m[1], m[2]);
       if (!target) continue;
       const resolved = resolve(target);
       const key = resolved || '?' + target.toLowerCase();
@@ -727,7 +729,7 @@ async function renameNote(path, newName) {
     api.saveGroups(state.groups);
   }
 
-  const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#]|,\\s*["“”„])`, 'gi');
+  const re = new RegExp(`\\[\\[\\s*${escapeRe(oldName)}\\s*(?=[\\]|#]|,?\\s*["“”„])`, 'gi');
   for (const n of state.notes.values()) {
     const updated = n.content.replace(re, `[[${newName}`);
     if (updated !== n.content) {
@@ -767,8 +769,8 @@ function unlinkFrom(gone) {
       content = content.slice(0, from) + insert + content.slice(to);
     }
     content = outsideCode(content, (part) =>
-      part.replace(LINK_RE, (m, inner) => {
-        const l = parseLink(inner);
+      part.replace(LINK_RE, (m, inner, shown) => {
+        const l = parseLink(inner, shown);
         return gone.has(resolve(l.target)) ? l.alias || l.raw : m;
       })
     );
@@ -849,8 +851,8 @@ function renderPreview() {
   const note = state.notes.get(state.current);
   if (!note) return;
   const md = outsideCode(stripFront(note.content), (part) =>
-    part.replace(LINK_RE, (_m, inner) => {
-      const { target, alias, raw } = parseLink(inner);
+    part.replace(LINK_RE, (_m, inner, shown) => {
+      const { target, alias, raw } = parseLink(inner, shown);
       const cls = resolve(target) ? 'wikilink' : 'wikilink unresolved';
       return `<a href="#" class="${cls}" data-target="${escapeHtml(target)}">${escapeHtml(alias || raw)}</a>`;
     })
@@ -1000,7 +1002,7 @@ function edited(ts) {
 // Small rendered preview of the start of a note, shown as a shrunken page
 function thumbHtml(content) {
   const md = outsideCode(stripFront(content).slice(0, 1500), (part) =>
-    part.replace(LINK_RE, (_m, inner) => `<span class="wikilink">${escapeHtml(parseLink(inner).alias || parseLink(inner).raw)}</span>`)
+    part.replace(LINK_RE, (_m, inner, shown) => `<span class="wikilink">${escapeHtml(parseLink(inner, shown).alias || parseLink(inner, shown).raw)}</span>`)
   );
   return marked.parse(md);
 }
@@ -1143,7 +1145,7 @@ $('#vh-import').addEventListener('click', () => $('#file-input').click());
 function linkContext(content, targetPath) {
   for (const line of stripCode(content).split('\n')) {
     for (const m of line.matchAll(LINK_RE)) {
-      if (resolve(parseLink(m[1]).target) === targetPath) return line.replace(LINK_RE, (_x, i) => parseLink(i).alias || parseLink(i).raw).trim();
+      if (resolve(parseLink(m[1], m[2]).target) === targetPath) return line.replace(LINK_RE, (_x, i, s) => parseLink(i, s).alias || parseLink(i, s).raw).trim();
     }
   }
   return '';

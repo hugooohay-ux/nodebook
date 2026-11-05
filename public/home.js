@@ -21,7 +21,7 @@ const Home = (() => {
     const edges = [];
     notes.slice(0, 150).forEach((n, i) => {
       for (const m of n.content.matchAll(LINK_RE)) {
-        const j = names.get(m[1].replace(/\s*,\s*["“”„].*$/, '').trim().toLowerCase()); // [[Note, "shown text"]]
+        const j = names.get(m[1].replace(/\s*,?\s*["“”„].*$/, '').trim().toLowerCase()); // [[Note, "shown text"]]
         if (j !== undefined && j !== i && j < nodes.length) { edges.push([i, j]); nodes[i].deg++; nodes[j].deg++; }
       }
     });

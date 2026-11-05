@@ -8,22 +8,24 @@ import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/lang
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { tags as t } from '@lezer/highlight';
 
-const LINK_RE = /\[\[([^[\]\n]+?)\]\]/g;
+// [[Note]] — or [[Note]shown text], which shows "shown text" (group 2)
+const LINK_RE = /\[\[([^[\]\n]+?)\](?:\]|([^[\]\n]+)\])/g;
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 const WORD_CH = /[\p{L}\p{N}_'-]/u;
 
 const refreshLinks = StateEffect.define(); // re-check which links resolve
 const external = Annotation.define(); // changes that didn't come from typing
 
-// [[Note]], [[Note#Heading]], [[Note|shown text]] or [[Note, "shown text"]] (any kind of quotes)
-const SHOWN_RE = /^(.*?)\s*,\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
-function parseLink(inner) {
+// [[Note]], [[Note#Heading]], [[Note]shown text] (`after` = what follows the first ]),
+// or the older [[Note|shown text]] and [[Note, "shown text"]]
+const SHOWN_RE = /^(.*?)\s*,?\s*["“”„]{1,2}([^"“”„]*)["“”„]{1,2}\s*$/;
+function parseLink(inner, after) {
   let raw = inner;
-  let shown = null;
+  let shown = after?.trim() || null;
   const q = SHOWN_RE.exec(inner);
   const bar = inner.indexOf('|');
-  if (q) [raw, shown] = [q[1], q[2].trim()];
-  else if (bar >= 0) [raw, shown] = [inner.slice(0, bar), inner.slice(bar + 1).trim()];
+  if (q) [raw, shown] = [q[1], shown || q[2].trim()];
+  else if (bar >= 0) [raw, shown] = [inner.slice(0, bar), shown || inner.slice(bar + 1).trim()];
   raw = raw.trim();
   return { target: raw.split('#')[0].trim(), label: shown || raw };
 }
@@ -101,7 +103,7 @@ function linkDecorations(view, opts) {
     const from = m.index;
     const to = from + m[0].length;
     if (from < props || code.some(([a, b]) => from >= a && from < b)) continue;
-    const { target, label } = parseLink(m[1]);
+    const { target, label } = parseLink(m[1], m[2]);
     if (!target) continue;
     // Show the raw [[...]] only while the cursor is in or touching it
     const editing = view.hasFocus && ranges.some((r) => r.from <= to && r.to >= from);
