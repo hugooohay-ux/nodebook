@@ -34,6 +34,7 @@ const Graph = (() => {
   let dragRegion = null; // while dragging: the notes allowed to follow
   const cam = { x: 0, y: 0, k: 1 };
   let alpha = 1;
+  let deepJob = null; // the background repair running now, if any (see startDeepRepair)
   let visible = false;
   let raf = 0;
   let hover = null;
@@ -54,6 +55,7 @@ const Graph = (() => {
 
   // ---------- data ----------
   function rebuild() {
+    stopDeepRepair();
     const { notes, links, related, critical, groups, current } = opts.getData();
     const map = new Map();
     // fwd/bwd: links written in the text (fwd = notes this one links to) — the hover chain follows these.
@@ -254,7 +256,7 @@ const Graph = (() => {
     const below = walk(start, 'down');
     const above = new Map([[start.id, 0]]);
     const upEdges = new Set(); // the steps actually taken going up: "lower\nhigher"
-    const critEdges = new Set(); // the steps on the way to a critical note (drawn stronger)
+    const critEdges = new Set(); // the steps on the way to a critical note
     for (const id of start.up) {
       if (!byId.has(id) || id === start.id) continue;
       above.set(id, 1);
@@ -693,11 +695,11 @@ const Graph = (() => {
   // go and let them glide there, so the graph untangles while you're still moving instead of after
   function liveTidy() {
     const now = performance.now();
-    if (now - lastLive < (nodes.length > 60 ? 250 : 120)) return; // less often in big vaults so dragging stays fluid
+    if (now - lastLive < (nodes.length > 60 ? 400 : 250)) return; // less often in big vaults so dragging stays fluid
     lastLive = now;
     if (!overlaps()) return; // keep any glides already under way; nothing new to fix
     const snap = snapshot();
-    improve(25, true);
+    improve(nodes.length > 60 ? 5 : 8, true); // a short look each time, so dragging stays smooth
     for (const n of nodes) {
       const [x, y] = snap.get(n.id);
       if (Math.hypot(n.x - x, n.y - y) > 0.5) guide.set(n.id, [n.x, n.y]);
@@ -858,25 +860,22 @@ const Graph = (() => {
     const continuing = guide.size > 0;
     guide.clear();
     alpha = 0; // stop exactly as it is
-    const swings = overlaps() ? improve(nodes.length > 60 ? 150 : 400, true, nodes.length > 60 ? 250 : 700) : new Map(); // small vaults: time to fix everything
+    stopDeepRepair();
+    // A quick fix right away (short, so the page never freezes); a big mess (something dragged far) is left
+    // to the thorough repair, which runs in the background afterwards
+    const swings = overlaps() && countCrossings() < 3 ? improve(nodes.length > 60 ? 40 : 80, true) : new Map();
     const region = dropped ? around(dropped, 2) : new Set(nodes);
     lineLen = typicalLine();
     for (const [id, a] of polish(region, 90, from)) if (!swings.has(id)) swings.set(id, a);
     for (const n of nodes) positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
     // notes already gliding finish with an ease-out, so they don't stop and start again
     animateFrom(from, swings, continuing ? { dur: 1600, ease: 'out' } : {});
+    startDeepRepair(); // whatever the quick fix couldn't untangle (does nothing if it's all clean)
   }
 
   // Move the notes in trouble one by one to cleaner spots; returns which note each moved one swung around
   // `minimal`: only fix overlapping lines, and move as little as possible (keeps the shape you left it in)
-  // `deepMs`: extra time to untangle knots single moves can't (after a drop or slider change, not while dragging)
-  function improve(budgetMs, minimal = false, deepMs = 0) {
-    // Lots of crossings at once (something dragged far into another cluster): small moves won't do, so all the
-    // time goes to the untangling below, starting from the layout as you left it
-    if (minimal && deepMs && countCrossings() >= 3) {
-      deepMs += budgetMs;
-      budgetMs = 0;
-    }
+  function improve(budgetMs, minimal = false) {
     const until = performance.now() + budgetMs;
     const swingsAround = new Map(); // moved note id -> id of the note it swings around in the animation
     const free = (n) => !isHeld(n); // the note in your hand, pinned notes and the last dropped one stay put
@@ -1052,53 +1051,6 @@ const Graph = (() => {
       }
       if (clean()) break;
     }
-    // Still crossing? Then it's a knot no single move can undo (e.g. a loop of notes with a line through it,
-    // where two notes have to change sides together). Re-settle just the notes involved and their neighbours.
-    // Each candidate untangling is finished off with the usual small moves, and kept only if the end result
-    // has fewer overlaps than before.
-    const deepUntil = performance.now() + deepMs;
-    for (let round = 0; minimal && deepMs && !clean() && round < 6 && performance.now() < deepUntil; round++) {
-      const snap = snapshot();
-      let bestEnd = null;
-      // the round's time: almost half for flips, a bit for re-settling the knot, the rest for re-settling all
-      const t0 = performance.now();
-      const left = deepUntil - t0;
-      const ends = [t0 + left * 0.45, t0 + left * 0.6, deepUntil];
-      const tryAll = (cands, end, follow = 50) => {
-        for (const cand of cands) {
-          if (performance.now() > end || bestEnd?.k === 0) return;
-          restore(snap);
-          cand.forEach(([n, x, y]) => { n.x = x; n.y = y; });
-          const more = improve(nodes.length > 60 ? follow / 2 : follow, true); // its neighbours follow it
-          const k = overlaps();
-          if (k < count && (!bestEnd || k < bestEnd.k)) bestEnd = { k, pos: snapshot(), more, moved: cand.map(([n]) => n) };
-        }
-      };
-      const steps = [
-        (end) => tryAll(flips(), end),
-        (end) => tryAll(untangle(Math.max(10, (end - performance.now()) * 0.6)), end),
-        // e.g. a big note dragged far off, its lines now cutting through another cluster: every note that isn't
-        // held re-settles, so its cluster follows it and the rest make room
-        (end) => tryAll(untangle(Math.max(10, (end - performance.now()) * 0.5), true), end + 30, 120),
-      ];
-      // many crossings at once (something dragged far): re-settle everything first
-      if (countCrossings() >= 3) {
-        steps.unshift(steps.pop());
-        ends[0] = t0 + left * 0.7;
-        ends[1] = t0 + left * 0.85;
-      }
-      steps.forEach((step, i) => {
-        if (bestEnd?.k === 0) return;
-        restore(snap);
-        step(ends[i]);
-      });
-      restore(bestEnd ? bestEnd.pos : snap);
-      if (bestEnd) {
-        for (const n of bestEnd.moved) swingsAround.delete(n.id);
-        for (const [id, a] of bestEnd.more) swingsAround.set(id, a);
-        count = bestEnd.k;
-      } else break; // nothing helps any more
-    }
     return swingsAround;
   }
 
@@ -1108,7 +1060,9 @@ const Graph = (() => {
   // moved notes'. Returns the best few starts as [[note, x, y], …] lists (fewest crossings, then fewest
   // overlaps, then least movement), only ones with fewer crossings than now; positions are left unchanged.
   // `wide`: every note that isn't held re-settles (only from where they are now, plus small shakes)
-  function untangle(budgetMs, wide = false) {
+  // Called a slice at a time: `seed` picks a different set of starts each call (0 also tries the layout as it is).
+  // Returns every start that qualified, as { crossings, k, travel, pos }.
+  function untangle(budgetMs, wide = false, seed = 0) {
     const until = performance.now() + budgetMs;
     const D = lineLen || settings.dist;
     const trouble = troubleNotes(true);
@@ -1134,10 +1088,10 @@ const Graph = (() => {
     const spread = Math.max(D * 1.5, Math.max(...start.map(([x, y]) => Math.hypot(x - cx, y - cy))));
     // notes near enough to push on the knot
     const near = wide ? nodes : nodes.filter((q) => Math.hypot(q.x - cx, q.y - cy) < spread + D * 3);
-    let s = 4242;
+    let s = 4242 + seed * 7919;
     const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
     const found = [];
-    for (let t = 0; performance.now() < until && t < 200; t++) {
+    for (let t = seed ? 1 : 0; performance.now() < until && t < 200; t++) {
       // the first start is where they are now; then a mix of small shakes and scattered starts
       const shake = t % 2 === 1;
       list.forEach((n, i) => {
@@ -1165,8 +1119,129 @@ const Graph = (() => {
       found.push({ crossings, k: overlaps(), travel, pos: list.map((n) => [n, n.x, n.y]) });
     }
     list.forEach((n, i) => { [n.x, n.y] = start[i]; n.vx = 0; n.vy = 0; });
-    found.sort((a, b) => a.crossings - b.crossings || a.k - b.k || a.travel - b.travel);
-    return found.slice(0, 4).map((f) => f.pos);
+    return found;
+  }
+
+  // The thorough untangling (flips, re-settling the knot, re-settling everything), written as a generator so
+  // it runs a few milliseconds at a time between frames instead of freezing the page. Runs on a copy of the
+  // graph (see startDeepRepair). Returns { swings, count }: how notes should swing, and the overlaps left.
+  // `job.over` set: stop soon and return the best found so far.
+  function* deepRepair(job) {
+    const swings = new Map();
+    let count = overlaps();
+    // pieces of ~30ms: long enough for the small moves to get past the end notes to the bigger ones each time
+    const slice = (ms) => improve(nodes.length > 60 ? ms / 2 : ms, true);
+    // the usual small moves first, unless it's a big mess (something dragged far): then they'd only get in the way
+    if (countCrossings() < 3) {
+      for (let quiet = 0; count && quiet < 3 && !job.over; ) {
+        const before = count;
+        for (const [id, a] of slice(30)) swings.set(id, a);
+        count = overlaps();
+        quiet = count < before ? 0 : quiet + 1;
+        yield;
+      }
+    }
+    for (let round = 0; count && round < 6 && !job.over; round++) {
+      const snap = snapshot();
+      let bestEnd = null;
+      // finish a start off with the usual small moves (its neighbours follow it), keep it if it's the best yet
+      const finish = function* (cand, slices) {
+        restore(snap);
+        cand.forEach(([n, x, y]) => { n.x = x; n.y = y; });
+        const more = new Map();
+        for (let i = 0; i < slices; i++) {
+          for (const [id, a] of slice(30)) more.set(id, a);
+          if (!overlaps()) break;
+          yield;
+        }
+        const k = overlaps();
+        if (k < count && (!bestEnd || k < bestEnd.k)) bestEnd = { k, pos: snapshot(), more, moved: cand.map(([n]) => n) };
+      };
+      const settled = function* (wide, calls) {
+        const all = [];
+        for (let i = 0; i < calls && !job.over; i++) {
+          restore(snap);
+          all.push(...untangle(8, wide, round * 100 + i));
+          yield;
+        }
+        restore(snap);
+        all.sort((a, b) => a.crossings - b.crossings || a.k - b.k || a.travel - b.travel);
+        return all.slice(0, 4).map((f) => f.pos);
+      };
+      // flips, then re-settling the knot, then re-settling everything — or everything first if it's a big mess
+      const phases = countCrossings() >= 3 ? ['all', 'flip', 'knot'] : ['flip', 'knot', 'all'];
+      for (const phase of phases) {
+        if (bestEnd?.k === 0 || job.over) break;
+        restore(snap);
+        const cands = phase === 'flip' ? flips() : yield* settled(phase === 'all', phase === 'all' ? 30 : 12);
+        for (const cand of cands) {
+          if (bestEnd?.k === 0 || job.over) break;
+          yield* finish(cand, phase === 'all' ? 4 : 2);
+        }
+      }
+      restore(bestEnd ? bestEnd.pos : snap);
+      if (!bestEnd) break; // nothing helps any more
+      for (const n of bestEnd.moved) swings.delete(n.id);
+      for (const [id, a] of bestEnd.more) swings.set(id, a);
+      count = bestEnd.k;
+      yield;
+    }
+    return { swings, count };
+  }
+
+  // Run deepRepair in the background on a copy of the graph; when it's done and found something cleaner,
+  // the notes glide there. Anything you do in the graph meanwhile (dragging, sliders, a rebuild) cancels it.
+  function stopDeepRepair() {
+    if (!deepJob) return;
+    deepJob.stop = true;
+    clearTimeout(deepJob.timer);
+    deepJob = null;
+  }
+  function startDeepRepair() {
+    stopDeepRepair();
+    const goal = (n) => (n.anim ? [n.anim.gx, n.anim.gy] : [n.x, n.y]);
+    const clones = new Map(nodes.map((n) => { const [x, y] = goal(n); return [n, { ...n, x, y, vx: 0, vy: 0, anim: null }]; }));
+    const world = [[...clones.values()], edges.map(([p, q]) => [clones.get(p), clones.get(q)]), new Map([...clones.values()].map((c) => [c.id, c]))];
+    const inWorld = (fn) => {
+      const saved = [nodes, edges, byId];
+      [nodes, edges, byId] = world;
+      try { return fn(); } finally { [nodes, edges, byId] = saved; }
+    };
+    const startCount = inWorld(overlaps);
+    if (!startCount) return;
+    const job = { stop: false, over: false, work: 0, timer: 0 };
+    const gen = deepRepair(job);
+    const limit = nodes.length > 60 ? 800 : 1500; // ms of work at most
+    job.run = (all = false) => {
+      if (job.stop) return;
+      const t = performance.now();
+      let r;
+      inWorld(() => {
+        do {
+          r = gen.next();
+          if (job.work + performance.now() - t > limit) job.over = true; // enough: wrap up with the best so far
+        } while (!r.done && (all || performance.now() - t < 8));
+      });
+      job.work += performance.now() - t;
+      clearTimeout(job.timer);
+      if (!r.done) { job.timer = setTimeout(() => job.run(), 0); return; }
+      job.stop = true;
+      if (deepJob === job) deepJob = null;
+      if (!r.value || r.value.count >= startCount) return;
+      // glide from wherever the notes are right now to the cleaner layout
+      const from = snapshot();
+      for (const n of nodes) {
+        const c = clones.get(n);
+        if (!c) continue;
+        n.x = c.x;
+        n.y = c.y;
+        n.anim = null;
+        positions.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+      }
+      animateFrom(from, r.value.swings, { dur: 1600, ease: 'out' });
+    };
+    deepJob = job;
+    job.timer = setTimeout(() => job.run(), 30);
   }
 
   // Flips: a note in the knot jumps to its mirror spot across the line between two of the notes it links to,
@@ -1378,7 +1453,6 @@ const Graph = (() => {
         // A highlighted edge continues one of the two lines, pointing away from the hovered note
         const [p, r] = e;
         e.from = e.to = null;
-        e.crit = !!c && (c.critEdges.has(p.id + '\n' + r.id) || c.critEdges.has(r.id + '\n' + p.id)); // drawn stronger
         if (!c) continue;
         for (const [dir, depth] of [['down', c.below], ['up', c.above]]) {
           const dp = depth.get(p.id);
@@ -1442,9 +1516,9 @@ const Graph = (() => {
       const a = e.from;
       const b = e.to;
       const hs = segment(a, b);
-      ctx.globalAlpha = on * (e.crit ? 1 : 0.9);
+      ctx.globalAlpha = on * 0.9;
       ctx.strokeStyle = ctx.fillStyle = COLORS.edgeHi;
-      ctx.lineWidth = (e.crit ? 1.5 + on * 2.6 : 1 + on * 1.2) / cam.k; // a critical link stands out
+      ctx.lineWidth = (1 + on * 1.2) / cam.k;
       ctx.beginPath();
       ctx.moveTo(hs[0], hs[1]);
       ctx.lineTo(hs[2], hs[3]);
@@ -1685,6 +1759,7 @@ const Graph = (() => {
       drag = n ? { node: n } : { pan: true, sx: p.sx, sy: p.sy, cx: cam.x, cy: cam.y };
       if (n) {
         alpha = Math.max(alpha, 0.3); // linked notes follow while you drag, like Obsidian
+        stopDeepRepair();
         for (const m of nodes) m.anim = null; // a new drag takes over from any repair still animating
         guide.clear();
         dragRegion = around(n, 2); // only notes near the one in your hand follow it
@@ -1772,8 +1847,8 @@ const Graph = (() => {
     on('g-depth', 'input', (e) => { settings.depth = +e.target.value; if (settings.local) { rebuild(); fitPending = true; } });
     on('g-unresolved', 'change', (e) => { settings.unresolved = e.target.checked; rebuild(); });
     on('g-orphans', 'change', (e) => { settings.orphans = e.target.checked; rebuild(); });
-    on('g-repel', 'input', (e) => { settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
-    on('g-dist', 'input', (e) => { settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
+    on('g-repel', 'input', (e) => { stopDeepRepair(); settings.repel = +e.target.value; alpha = Math.max(alpha, 0.4); });
+    on('g-dist', 'input', (e) => { stopDeepRepair(); settings.dist = +e.target.value; alpha = Math.max(alpha, 0.4); });
     on('g-size', 'input', (e) => {
       settings.sizeMul = +e.target.value;
       alpha = Math.max(alpha, 0.3); // bigger notes need a bit more room
@@ -1782,6 +1857,7 @@ const Graph = (() => {
     const sizeSlider = document.getElementById('g-size');
     if (sizeSlider) sizeSlider.value = settings.sizeMul;
     on('g-link', 'input', (e) => {
+      stopDeepRepair();
       settings.linkMul = +e.target.value;
       alpha = Math.max(alpha, 0.4);
       saveSettings();
@@ -1870,6 +1946,7 @@ const Graph = (() => {
       raf = requestAnimationFrame(loop);
     },
     hide() {
+      stopDeepRepair();
       visible = false;
       cancelAnimationFrame(raf);
       hover = null;
@@ -1914,6 +1991,7 @@ const Graph = (() => {
     },
     settle(droppedId = null) {
       settleAndTidy(droppedId ? byId.get(droppedId) : null);
+      deepJob?.run(true); // tests: finish the background repair now
       this.finishAnimations();
     },
     // Jump every running animation to its end (for tests: background tabs don't run animations)
