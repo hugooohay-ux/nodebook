@@ -133,13 +133,23 @@ const Graph = (() => {
     for (const n of keep) n.critKids = [];
     for (const n of keep) if (byId.has(n.critical)) byId.get(n.critical).critKids.push(n);
 
-    // A link always points up, to the broader note it builds on: in Säljarens dröjsmål, [[Köplagen]] puts
-    // Säljarens dröjsmål under Köplagen. So the notes below a note are the ones that link to it.
-    // Size = how much sits below a note (every note reachable going down), scaled from smallest (0) to biggest (1):
-    // the notes most things build on are the biggest.
-    keep.forEach((n) => { n.down = n.bwd; n.up = n.fwd; });
-    if (keep.length <= 1500) keep.forEach((n) => (n.below = walk(n, 'down').size - 1));
-    else keep.forEach((n) => (n.below = n.links)); // very large vaults: plain link count is much cheaper
+    // Which way is "down" the link chains: whichever direction has the clearest top note, so it works whether
+    // a topic links to its subtopics (Associationsrätt → [[Bolagsformer]]) or the subtopics link back up to it.
+    // Size = how much sits below a note (every note reachable going down), scaled from smallest (0) to biggest (1).
+    const orient = (dir) => keep.forEach((n) => { n.down = dir === 'fwd' ? n.fwd : n.bwd; n.up = dir === 'fwd' ? n.bwd : n.fwd; });
+    if (keep.length <= 1500) {
+      orient('fwd');
+      const viaFwd = keep.map((n) => walk(n, 'down').size - 1);
+      orient('bwd');
+      const viaBwd = keep.map((n) => walk(n, 'down').size - 1);
+      const useFwd = Math.max(0, ...viaFwd) >= Math.max(0, ...viaBwd);
+      orient(useFwd ? 'fwd' : 'bwd');
+      const below = useFwd ? viaFwd : viaBwd;
+      keep.forEach((n, i) => (n.below = below[i]));
+    } else {
+      orient('fwd');
+      keep.forEach((n) => (n.below = n.links)); // very large vaults: plain link count is much cheaper
+    }
     const lo = Math.min(...keep.map((n) => n.below));
     const hi = Math.max(...keep.map((n) => n.below));
     for (const n of keep) n.size = hi > lo ? (n.below - lo) / (hi - lo) : 0;

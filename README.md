@@ -30,12 +30,11 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   and in the graph it lights one step only, the same as the Related to bar
 - Clicking a link to a note that doesn't exist creates it
 - Backlinks (with context) and outgoing links for every note
-- Links in the text are the main way notes connect, and a link points **up**: link to the broader note this
-  one belongs under or builds on (Säljarens dröjsmål links to [[Köplagen]] and [[Avtalsbrott]]). The broader
-  note doesn't need to list its parts; they show as its backlinks. Hovering a note in the graph follows the
-  links: everything below it (the notes that link to it) lights up, and above it every route to the top where
-  each step gets closer to the top (several equally short routes all light up; detours don't). Notes directly
-  above that aren't closer light up one step only. Never sideways: a sibling stays dark.
+- Links in the text are the main way notes connect. Hovering a note in the graph follows them:
+  everything below it lights up, and above it every route to the top where each step gets closer to the top
+  (several equally short routes all light up; detours don't). Notes directly above that aren't closer light up
+  one step only. Never sideways: a sibling stays dark. Which way is "down" is worked out from the vault
+  (a topic linking to its subtopics, or the other way round, both work).
 - "Related to": a lighter side connection, set from the bar above each note and stored as `related:`
   properties (older `up:` entries are read too). When hovering it lights up one step only, so
   Handelsbolag → [[Juridisk person]] doesn't carry on to what Juridisk person is related to.
@@ -43,7 +42,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   route is shorter (e.g. a shortcut link from a top note). It's one-way: it only steers that note's own path;
   hovering the critical note doesn't light the note that points to it. No line is added for it: the highlight travels along the shortest chain of existing links to get there.
   Stored as `critical:`.
-- Note size = how much sits below a note along its links: the notes most things build on are the biggest
+- Note size = how much sits below a note along its links
 - Renaming a note updates every link to it across the vault (all link forms, and "Related to")
 - Deleting a note turns links to it into plain text, so nothing is left pointing at a note that's gone
 - Graph: hold right-click and drag to draw a box; every note inside gets selected (Ctrl/Shift adds to the
@@ -65,7 +64,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
   collapse it, add a note to it with ＋, rename/recolour/delete it with ⋯. A folder is a coloured group:
   its notes share its colour in the graph and can be pulled together. Groups can also be set from the graph
   (right-click a note) or the chip on a note, and managed in the graph panel.
-- "Example: Solar System" template on the home screen: 26 notes in 3 folders: each note links up to the note it is part of, plus a few "Related to" connections
+- "Example: Solar System" template on the home screen: 26 notes in 3 folders: topics link to their subtopics, plus a few "Related to" connections
 - Note size follows how linked a note is, with a "Node size" slider
 - Force-directed graph: drag, zoom, click to open, hover to highlight neighbours,
   local graph with depth, unresolved/orphan toggles. Typing in Highlight lights up the best-matching note's whole path,

@@ -12,32 +12,26 @@
 Nodebook keeps your notes as Markdown in this browser. Each vault is its own collection of linked notes.
 Use **Export** in the sidebar to download a vault as a .zip backup.
 
-- Link notes by typing \`[[\` and picking a note (see the note Linking notes).
+- Link notes by typing \`[[\` and picking a note, e.g. [[Linking notes]].
 - Or press **Ctrl+Enter** with the cursor in (or just after) a word to turn it into a new note.
-- Open the graph view with **Ctrl+G** to see how everything connects.
-- Every note shows its **backlinks** in the right panel: the notes that link up to it.
+- Open the [[Graph view]] with **Ctrl+G** to see how everything connects.
+- Every note shows its **backlinks** in the right panel.
 
 Shortcuts: Alt+N new note · Ctrl+P search · Ctrl+E edit/read · Alt+←/→ back/forward
 `,
       'Linking notes.md': `# Linking notes
-Part of [[Welcome|the welcome note]].
 
 Write \`[[Note name]]\` to link to another note. If the note doesn't exist yet,
 clicking the link creates it — like this one: [[Ideas]].
 
-A link points **up**: in a note, link to the broader note it belongs under or builds on
-(a note about Mars links to [[Planets]]). The broader note lists it under backlinks, and in the
-graph it sits above it and grows bigger the more notes build on it.
-
-To mention a note beside this one without putting it above, write \`[r[Note name]]\` (related).
+Use an alias with a pipe: [[Welcome|back to the start]].
 `,
       'Graph view.md': `# Graph view
-Part of [[Welcome]].
 
 Each note is a node, each link is an edge. Drag nodes, scroll to zoom,
 click a node to open it. Toggle **Local** to only see neighbours of the current note.
 
-See also: [r[Linking notes]].
+See also: [[Welcome]], [[Linking notes]].
 `,
     },
   };
