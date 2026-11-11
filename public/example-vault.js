@@ -1,6 +1,6 @@
 // A small, clean example vault: the Solar System.
-// - Every topic links to its subtopics in its text: one-way links that make clean paths when hovering,
-//   like Solar System → Planets → Outer planets → Saturn → Titan.
+// - Every note links up, in its text, to the note it's part of: one-way links that make clean paths when
+//   hovering, like Titan → Saturn → Outer planets → Planets → Solar System.
 // - A few "Related to" connections close small triangles between neighbours; they only reach one step.
 // - Three folders colour the branches.
 window.EXAMPLE_VAULT = (() => {
@@ -86,13 +86,12 @@ Balls of ice and dust that grow glowing tails near the Sun. Short-period comets 
   N(B, "Halley's Comet", 'Comets', `
 Returns every 75–76 years: last seen in 1986, next in 2061.`);
 
-  // A topic links to its subtopics in its text (that's what builds the chains in the graph);
-  // a few side connections are "Related to" instead, which only reach one step.
+  // Each note links up to the note it's part of, in its text (a link points up: that's what builds the chains
+  // in the graph); a few side connections are "Related to" instead, which only reach one step.
   const RELATED = { Sun: 'Planets', Venus: 'Earth', Saturn: 'Jupiter', Neptune: 'Uranus', Comets: 'Kuiper belt' };
-  const children = (title) => notes.filter((m) => m.up === title).map((m) => m.title);
   const files = notes.map((n) => ({
     path: `${n.title}.md`,
-    content: (RELATED[n.title] ? `---\nrelated:\n  - "[[${RELATED[n.title]}]]"\n---\n` : '') + n.body + (children(n.title).length ? '\n\n' + children(n.title).map((t) => `- [[${t}]]`).join('\n') : '') + '\n',
+    content: (RELATED[n.title] ? `---\nrelated:\n  - "[[${RELATED[n.title]}]]"\n---\n` : '') + (n.up ? `Part of [[${n.up}]].\n\n` : '') + n.body + '\n',
   }));
   const list = folders.map((f, i) => ({ id: `ex${i}`, name: f.name, color: f.color }));
   const members = {};
