@@ -97,10 +97,16 @@ See also: [r[Linking notes]].
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // Besides the notes, an exported zip carries the vault's graph setup in this file: groups (folders), notes
+  // placed by hand, and where every note was in the graph. Other apps just see a hidden folder.
+  const META = '.nodebook/vault.json';
+
   async function readZip(file) {
     const zip = await JSZip.loadAsync(file);
     const out = [];
+    let metaEntry = null;
     for (const entry of Object.values(zip.files)) {
+      if (!entry.dir && (entry.name === META || entry.name.endsWith('/' + META))) metaEntry = entry;
       if (entry.dir || !/\.md$/i.test(entry.name) || entry.name.split('/').some((p) => p.startsWith('.') || p === '__MACOSX')) continue;
       out.push({ path: cleanPath(entry.name), content: await entry.async('string') });
     }
@@ -108,15 +114,46 @@ See also: [r[Linking notes]].
     const tops = new Set(out.map((n) => (n.path.includes('/') ? n.path.split('/')[0] : '')));
     const [top] = tops;
     if (tops.size === 1 && top) for (const n of out) n.path = n.path.slice(top.length + 1);
+    let meta = null;
+    try {
+      if (metaEntry) meta = cleanMeta(JSON.parse(await metaEntry.async('string')), new Set(out.map((n) => n.path)));
+    } catch { /* not readable: import just the notes */ }
+    return { notes: out, meta };
+  }
+
+  // Only keep well-formed parts of an imported vault.json, for notes that are in the zip (it could come from anywhere)
+  function cleanMeta(m, paths) {
+    const num = (v) => typeof v === 'number' && Number.isFinite(v);
+    const str = (v) => typeof v === 'string' && v.length < 500;
+    const known = (p) => paths.has(p) || (str(p) && p.startsWith('?')); // "?name": a link to a note not written yet
+    const out = {};
+    if (m?.groups && Array.isArray(m.groups.list)) {
+      const list = m.groups.list.filter((g) => g && str(g.id) && str(g.name) && (!g.color || /^#[0-9a-f]{3,8}$/i.test(g.color))).map((g) => ({ id: g.id, name: g.name, ...(g.color ? { color: g.color } : {}) }));
+      const ids = new Set(list.map((g) => g.id));
+      const members = {};
+      for (const [p, g] of Object.entries(m.groups.members || {})) if (paths.has(p) && ids.has(g)) members[p] = g;
+      out.groups = { list, members };
+    }
+    if (m?.pins && typeof m.pins === 'object') {
+      out.pins = {};
+      for (const [p, v] of Object.entries(m.pins)) if (known(p) && num(v?.x) && num(v?.y)) out.pins[p] = { x: v.x, y: v.y };
+    }
+    if (m?.layout?.positions && typeof m.layout.positions === 'object') {
+      const positions = {};
+      for (const [p, v] of Object.entries(m.layout.positions)) if (known(p) && Array.isArray(v) && num(v[0]) && num(v[1])) positions[p] = [v[0], v[1]];
+      const c = m.layout.cam;
+      out.layout = { positions, ...(c && num(c.x) && num(c.y) && num(c.k) && c.k > 0 ? { cam: { x: c.x, y: c.y, k: c.k } } : {}) };
+    }
     return out;
   }
 
-  async function createVault(name, template = 'blank', notes = null, groups = null) {
+  // `extra`: { groups, pins, layout } to start the vault with (e.g. from an imported zip)
+  async function createVault(name, template = 'blank', notes = null, groups = null, extra = null) {
     const id = newId();
     const now = Date.now();
     const files = notes || Object.entries(TEMPLATES[template] || {}).map(([path, content]) => ({ path, content }));
     await tx('readwrite', (s) => {
-      s.vaults.put({ id, name: name || 'Untitled vault', created: now, opened: now, ...(groups ? { groups } : {}) });
+      s.vaults.put({ id, name: name || 'Untitled vault', created: now, opened: now, ...(groups ? { groups } : {}), ...(extra || {}) });
       for (const n of files) s.notes.put({ vault: id, path: n.path, content: n.content, mtime: now });
     });
     changed(id);
@@ -209,12 +246,18 @@ See also: [r[Linking notes]].
       const [vault, notes] = await tx('readonly', (s) => Promise.all([req(s.vaults.get(id)), vaultNotes(s, id)]));
       const zip = new JSZip();
       for (const n of notes) zip.file(n.path, n.content);
+      const meta = { version: 1, groups: vault.groups || { list: [], members: {} }, pins: vault.pins || {}, layout: vault.layout || null };
+      zip.file(META, JSON.stringify(meta, null, 1));
       download(await zip.generateAsync({ type: 'blob' }), `${vault.name.replace(/[\\/:*?"<>|]/g, '')}.zip`);
     },
 
+    // A zip exported from here comes back with its groups, placed notes and graph layout
     async importZipAsVault(file) {
-      const notes = await readZip(file);
-      return createVault(file.name.replace(/\.zip$/i, ''), 'blank', notes);
+      const { notes, meta } = await readZip(file);
+      const extra = {};
+      if (meta?.pins && Object.keys(meta.pins).length) extra.pins = meta.pins;
+      if (meta?.layout && Object.keys(meta.layout.positions).length) extra.layout = meta.layout;
+      return createVault(file.name.replace(/\.zip$/i, ''), 'blank', notes, meta?.groups?.list.length ? meta.groups : null, extra);
     },
 
     // ---------- notes in the open vault ----------
@@ -258,7 +301,7 @@ See also: [r[Linking notes]].
       const vault = need();
       const incoming = [];
       for (const f of files) {
-        if (/\.zip$/i.test(f.name)) incoming.push(...(await readZip(f)));
+        if (/\.zip$/i.test(f.name)) incoming.push(...(await readZip(f)).notes);
         else if (/\.md$/i.test(f.name)) incoming.push({ path: cleanPath(f.webkitRelativePath || f.name), content: await f.text() });
       }
       if (!incoming.length) return 0;

@@ -2021,7 +2021,7 @@ const Graph = (() => {
     const key = JSON.stringify(layout);
     if (key === lastSavedLayout) return;
     lastSavedLayout = key;
-    opts.onLayoutChange(layoutVault, layout);
+    return opts.onLayoutChange(layoutVault, layout);
   }
   setInterval(() => { if (visible) saveLayout(); }, 2000);
   addEventListener('pagehide', () => saveLayout(true));
@@ -2183,6 +2183,10 @@ const Graph = (() => {
       const n = byId.get(id);
       if (!n) return [];
       return [...chainFrom(n).all].filter(([, d]) => d > 0).sort((a, b) => a[1] - b[1]).map(([k]) => byId.get(k).label);
+    },
+    // Save where every note is right now (e.g. before exporting the vault); resolves when it's stored
+    saveLayoutNow() {
+      return Promise.resolve(saveLayout(true));
     },
     // Switching vaults: `placed` is the new vault's hand-placed notes, `saved` the layout it was left in (from
     // onLayoutChange), shown again exactly as it was; without one the graph gets a fresh layout

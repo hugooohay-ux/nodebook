@@ -19,7 +19,7 @@ In Render: **New → Blueprint**, pick this repository, and click **Apply**.
 
 ## Features
 
-- Home screen with every vault as a card (live graph thumbnail, note count, last opened); rename, export, delete; templates; import a `.zip` as a new vault
+- Home screen with every vault as a card (live graph thumbnail, note count, last opened); rename, export, delete; templates; import a `.zip` as a new vault. An exported `.zip` also carries the folders/groups, placed notes and graph layout (in `.nodebook/vault.json`), and they come back when it is imported
 - Markdown editor with Edit / Read modes and autosave. Spell checking like Obsidian, built in: misspelled
   words get a red wavy line, right-click for suggestions or "Add to dictionary". The Spelling button in the toolbar
   turns it on/off and picks Svenska and/or English. Dictionaries: `public/dict/` (Swedish from dictionary-sv, LGPL;

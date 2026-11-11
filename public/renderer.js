@@ -207,6 +207,12 @@ function rebuildIndex() {
   }
 }
 
+// Export the open vault as a .zip, with the graph as it is right now
+async function exportVault() {
+  await Graph.saveLayoutNow();
+  return api.exportVault();
+}
+
 // ---------- loading ----------
 async function loadNotes() {
   const list = await api.listNotes();
@@ -1173,7 +1179,7 @@ $('#vault-menu').addEventListener('click', async (e) => {
   $('#vault-menu').hidden = true;
   if (!li) return;
   if (li.dataset.act === 'rename') renameVault();
-  else if (li.dataset.act === 'export') api.exportVault();
+  else if (li.dataset.act === 'export') exportVault();
   else if (li.dataset.act === 'delete') {
     const ok = await Dialog.confirm(`“${state.vault.name}” and its ${state.notes.size} notes will be deleted. This can't be undone — export it first if you want a backup.`, { title: 'Delete vault?', okLabel: 'Delete', danger: true });
     if (!ok) return;
@@ -1196,7 +1202,7 @@ $('#note-grid').addEventListener('contextmenu', (e) => {
   menu.style.left = Math.min(e.clientX, innerWidth - menu.offsetWidth - 8) + 'px';
   menu.style.top = Math.min(e.clientY, innerHeight - menu.offsetHeight - 8) + 'px';
 });
-$('#vh-export').addEventListener('click', () => api.exportVault());
+$('#vh-export').addEventListener('click', () => exportVault());
 $('#vh-import').addEventListener('click', () => $('#file-input').click());
 
 function linkContext(content, targetPath) {
@@ -1460,7 +1466,7 @@ $('#btn-back').addEventListener('click', () => history.back());
 $('#btn-fwd').addEventListener('click', () => history.forward());
 $('#btn-export').addEventListener('click', async () => {
   await flushSave();
-  api.exportVault();
+  exportVault();
 });
 $('#btn-import').addEventListener('click', () => $('#file-input').click());
 $('#file-input').addEventListener('change', async (e) => {
